@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="theme-color" content="#f8f8f7">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Tomato Collector">
+  <meta name="description" content="Chụp và gán nhãn dữ liệu cà chua offline trên điện thoại.">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./style.css">
+  <title>Tomato Collector</title>
+</head>
+<body>
+<main class="wrap">
+  <header class="topbar">
+    <div>
+      <div class="overline">DATASET / CAMERA</div>
+      <h1>Tomato Collector<span class="dot">.</span></h1>
+    </div>
+    <div id="modeBadge" class="badge"><span class="status-dot"></span>Chưa cài offline</div>
+  </header>
+
+  <section class="camera-block" aria-label="Camera chụp ảnh">
+    <div id="stage" class="stage">
+      <video id="video" muted autoplay playsinline webkit-playsinline></video>
+      <canvas id="overlay" aria-label="Khung bao cà chua" ></canvas>
+      <div id="emptyView" class="empty-view">
+        <div class="camera-symbol">◎</div>
+        <div>Camera chưa mở</div>
+        <small>Bấm Mở camera để bắt đầu</small>
+      </div>
+      <div class="camera-tools">
+        <span id="resolution" class="frost-label">CAMERA OFF</span>
+        <button id="switchCam" class="frost-action" title="Đổi camera" hidden>↺</button>
+      </div>
+      <div id="cameraBottom" class="camera-bottom">Phát hiện thử bằng màu sắc · chưa dùng model AI</div>
+    </div>
+    <div class="camera-actions">
+      <button id="openCamera" class="secondary-btn" type="button">Mở camera</button>
+      <div class="auto-control">
+        <label class="switch-line" for="autoDetect">Tự khoanh</label>
+        <input id="autoDetect" type="checkbox" checked aria-label="Bật/tắt khoanh vùng tự động">
+      </div>
+    </div>
+  </section>
+
+  <section class="fields" aria-label="Thiết lập nhãn">
+    <div class="field">
+      <label for="ripeness">Độ chín</label>
+      <select id="ripeness">
+        <option value="Ripe">Chín</option>
+        <option value="Semi_Ripe">Bán chín</option>
+        <option value="Unripe">Xanh</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="disease">Tình trạng</label>
+      <select id="disease">
+        <option value="Healthy_Tomato">Khỏe mạnh</option>
+        <option value="Anthracnose">Bệnh thán thư</option>
+        <option value="Fruit_Cracking">Bệnh nứt quả</option>
+        <option value="Blossom_End_Rot">Bệnh thối đáy quả</option>
+        <option value="Bacterial_Spot">Bệnh đốm vi khuẩn</option>
+      </select>
+    </div>
+  </section>
+
+  <section class="shoot" aria-label="Chụp ảnh">
+    <button id="capture" class="capture-btn" disabled type="button">
+      <span class="capture-circle"></span><span>Nhấn giữ để chụp</span>
+    </button>
+    <div class="shoot-meta">
+      <span id="captureHint">Chạm 1 lần: 1 ảnh · Giữ: chụp liên tục</span>
+      <span id="count">0 ảnh</span>
+    </div>
+  </section>
+
+  <section class="library">
+    <div class="section-heading">
+      <div>
+        <h2>Ảnh đã lưu</h2>
+        <p>Lưu trực tiếp trên thiết bị này</p>
+      </div>
+      <button id="exportBtn" class="secondary-btn compact" type="button">Xuất ZIP</button>
+    </div>
+    <div id="gallery" class="gallery"><div class="gallery-empty">Chưa có ảnh nào</div></div>
+    <div id="downloadArea" class="download-area" hidden>
+      <a id="downloadLink" class="download-link" download="tomato_dataset.zip">Tải tệp ZIP đã tạo ↓</a>
+      <small>Trên iPhone, chọn Lưu vào Tệp sau khi tải.</small>
+    </div>
+  </section>
+
+  <details class="settings" id="settings">
+    <summary>Cài đặt thêm <span class="chevron">⌄</span></summary>
+    <div class="settings-inside">
+      <div class="field">
+        <label for="interval">Khoảng cách chụp liên tục</label>
+        <select id="interval"><option value="1000">1 giây</option><option value="600">0,6 giây</option><option value="1500">1,5 giây</option><option value="2000">2 giây</option></select>
+      </div>
+      <div class="field">
+        <label for="quality">Chất lượng camera yêu cầu</label>
+        <select id="quality"><option value="1920">1080p (ưu tiên)</option><option value="1280">720p (tiết kiệm)</option></select>
+      </div>
+      <div class="field">
+        <label for="batch">Số ảnh tối đa mỗi tệp ZIP</label>
+        <select id="batch"><option value="30">30 ảnh</option><option value="50" selected>50 ảnh</option><option value="100">100 ảnh</option></select>
+        <p class="field-help" id="batchHelp">Xuất theo từng lô, giữ toàn bộ ảnh đã chụp trên máy.</p>
+      </div>
+      <div class="field">
+        <label>Thuộc tính bổ sung (áp dụng cho cả phiên chụp)</label>
+        <div class="add-attribute"><input id="attrName" maxlength="30" placeholder="Tên: giống, kích cỡ…"><input id="attrValue" maxlength="60" placeholder="Giá trị"><button id="addAttr" class="square-btn" type="button" aria-label="Thêm thuộc tính">+</button></div>
+        <div id="attrList" class="attr-list"></div>
+      </div>
+      <div class="notice">Tự khoanh hiện sử dụng thuật toán lọc màu đỏ/xanh, chỉ để thử nghiệm trên nền đơn giản. Trái xanh giữa lá, bóng chói và nhiều quả chồng nhau có thể nhận sai. Bạn có thể sửa vùng trước khi xuất.</div>
+      <button id="clearAll" class="danger-link" type="button">Xóa toàn bộ ảnh đã lưu trên điện thoại</button>
+    </div>
+  </details>
+  <footer>Không tài khoản · Không gửi ảnh lên máy chủ · Ảnh và nhãn chỉ lưu cục bộ</footer>
+</main>
+
+<div id="reviewModal" class="modal" hidden>
+  <div class="modal-panel">
+    <div class="modal-top"><strong id="reviewTitle">Kiểm tra ảnh</strong><button id="closeReview" class="icon-btn" aria-label="Đóng">✕</button></div>
+    <div id="reviewStage" class="review-stage"><img id="reviewImage" alt="Ảnh cà chua vừa chụp"><canvas id="reviewCanvas"></canvas></div>
+    <p class="small muted">Chạm một khung để sửa nhãn. Kéo trên ảnh để thêm khung mới.</p>
+    <div id="boxTools" class="box-tools" hidden>
+      <div class="mini-fields">
+        <div class="field"><label for="boxRipeness">Độ chín trái này</label><select id="boxRipeness"><option value="Ripe">Chín</option><option value="Semi_Ripe">Bán chín</option><option value="Unripe">Xanh</option></select></div>
+        <div class="field"><label for="boxDisease">Tình trạng trái này</label><select id="boxDisease"><option value="Healthy_Tomato">Khỏe mạnh</option><option value="Anthracnose">Thán thư</option><option value="Fruit_Cracking">Nứt quả</option><option value="Blossom_End_Rot">Thối đáy quả</option><option value="Bacterial_Spot">Đốm vi khuẩn</option></select></div>
+      </div>
+      <button id="removeBox" class="danger-link" type="button">Xóa khung đang chọn</button>
+    </div>
+    <div class="review-footer"><span id="reviewCount" class="muted small"></span><button id="saveReview" class="capture-btn save-review" type="button">Lưu chỉnh sửa</button></div>
+    <button id="deletePhoto" class="danger-link delete-photo" type="button">Xóa ảnh này</button>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
