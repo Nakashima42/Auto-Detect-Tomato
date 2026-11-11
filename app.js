@@ -6,6 +6,7 @@ const ctx = overlay.getContext('2d');
 let db;
 let stream = null, rearCamera = true;
 let liveBoxes = [], manualBoxes = [], autoMode = true;
+let selectedPreviewBox = -1;
 let holdTimer = null, holding = false, snapping = false;
 let renderTimer = null, lastCameraError = '';
 let totalCount = 0, lastDownloadUrl = null;
@@ -263,7 +264,7 @@ async function startCamera(){
     $('switchCam').hidden=false;
     $('resolution').textContent=video.videoWidth+' × '+video.videoHeight;
     setCanvasSize(video.videoWidth,video.videoHeight);
-    manualBoxes=[];liveBoxes=[];
+    manualBoxes=[];liveBoxes=[];selectedPreviewBox=-1;
     renderTimer=setInterval(analyzeFrame,420);
     analyzeFrame();lastCameraError='';
   }catch(error){
@@ -287,7 +288,7 @@ function stopCamera(){
   $('switchCam').hidden=true;
   $('emptyView').hidden=false;
   $('resolution').textContent='CAMERA OFF';
-  liveBoxes=[];manualBoxes=[];drawOverlay();
+  liveBoxes=[];manualBoxes=[];selectedPreviewBox=-1;drawOverlay();
 }
 function setCanvasSize(w,h){overlay.width=w;overlay.height=h;}
 function analyzeFrame(){
@@ -303,13 +304,15 @@ function drawOverlay(){
   const boxes=autoMode?liveBoxes:manualBoxes;
   const scale=overlay.width/384;
   for(let i=0;i<boxes.length;i++){
-    const b=boxes[i];ctx.strokeStyle='#f6f6f6';ctx.lineWidth=Math.max(2,scale*1.5);
+    const b=boxes[i];
+    const selected=!autoMode && i===selectedPreviewBox;
+    ctx.strokeStyle=selected?'#ffffff':'#f6f6f6';ctx.lineWidth=Math.max(selected?3:2,scale*1.5);
     ctx.strokeRect(b.x,b.y,b.w,b.h);
     const size=Math.max(20,scale*12),pad=scale*5;
     ctx.font=`600 ${size}px -apple-system, sans-serif`;
     const label='Tomato '+(i+1),tw=ctx.measureText(label).width;
-    ctx.fillStyle='#171717';ctx.fillRect(b.x,Math.max(0,b.y-size-pad*2),tw+pad*2,size+pad*2);
-    ctx.fillStyle='#fff';ctx.fillText(label,b.x+pad,Math.max(size,b.y-pad));
+    ctx.fillStyle=selected?'#f8f8f8':'#171717';ctx.fillRect(b.x,Math.max(0,b.y-size-pad*2),tw+pad*2,size+pad*2);
+    ctx.fillStyle=selected?'#111':'#fff';ctx.fillText(label,b.x+pad,Math.max(size,b.y-pad));
   }
   if(dragging?.which==='preview'){
     const b=dragBox(dragging.start,dragging.current);ctx.strokeStyle='#fff';ctx.setLineDash([10,7]);ctx.strokeRect(b.x,b.y,b.w,b.h);ctx.setLineDash([]);
@@ -335,8 +338,17 @@ function movePreviewManual(e){
 }
 function finishPreviewManual(e){
   if(dragging?.which!=='preview')return;
-  const b=dragBox(dragging.start,framePos(e,stage,overlay.width,overlay.height));dragging=null;
-  if(b.w>12&&b.h>12){manualBoxes.push({...b,method:'manual'});tell('Đã thêm khung.');}drawOverlay();
+  const end=framePos(e,stage,overlay.width,overlay.height);
+  const b=dragBox(dragging.start,end);dragging=null;
+  if(b.w>12&&b.h>12){
+    manualBoxes.push({...b,method:'manual'});
+    selectedPreviewBox=manualBoxes.length-1;
+    tell('Đã thêm khung.');
+  }else{
+    selectedPreviewBox=findPreviewBoxAt(end);
+    if(selectedPreviewBox>=0)tell(`Đã chọn khung ${selectedPreviewBox+1}.`);
+  }
+  drawOverlay();
 }
 
 async function toJpeg(canvas,quality=.87){
@@ -625,7 +637,7 @@ async function boot(){
   $('openCamera').addEventListener('click',()=>stream?stopCamera():startCamera());
   $('switchCam').addEventListener('click',()=>{rearCamera=!rearCamera;startCamera();});
   $('quality').addEventListener('change',()=>{if(stream)startCamera();});
-  $('autoDetect').addEventListener('change',e=>{autoMode=e.target.checked;manualBoxes=[];liveBoxes=[];drawOverlay();});
+  $('autoDetect').addEventListener('change',e=>{autoMode=e.target.checked;manualBoxes=[];liveBoxes=[];selectedPreviewBox=-1;drawOverlay();});
   $('sensitivity')?.addEventListener('change',()=>{liveBoxes=[];analyzeFrame();});
   overlay.addEventListener('pointerdown',addPreviewManual);overlay.addEventListener('pointermove',movePreviewManual);
   overlay.addEventListener('pointerup',finishPreviewManual);overlay.addEventListener('pointercancel',finishPreviewManual);
@@ -635,6 +647,13 @@ async function boot(){
   $('capture').addEventListener('keydown',e=>{if((e.code==='Space'||e.code==='Enter')&&!holding)beginHold(e);});
   $('capture').addEventListener('keyup',e=>{if(e.code==='Space'||e.code==='Enter')endHold();});
   window.addEventListener('blur',endHold);document.addEventListener('visibilitychange',()=>{if(document.hidden)endHold();});
+  $('removePreviewBox')?.addEventListener('click',()=>{
+    if(selectedPreviewBox<0||selectedPreviewBox>=manualBoxes.length)return;
+    manualBoxes.splice(selectedPreviewBox,1);
+    if(selectedPreviewBox>=manualBoxes.length)selectedPreviewBox=manualBoxes.length-1;
+    tell('Đã xóa khung đã chọn.');
+    drawOverlay();
+  });
   $('exportBtn').addEventListener('click',()=>exportPendingZip({auto:false}));
   $('selectMode').addEventListener('click',async()=>{
     selectionMode=!selectionMode;

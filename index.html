@@ -11,7 +11,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="apple-touch-icon" href="./icon-192.png">
   <link rel="icon" href="./icon-192.png">
-  <link rel="stylesheet" href="./style.css?v=5">
+  <link rel="stylesheet" href="./style.css?v=6">
   <title>Tomato Collector</title>
 </head>
 <body>
@@ -37,7 +37,7 @@
         <span id="resolution" class="frost-label">CAMERA OFF</span>
         <button id="switchCam" class="frost-action" title="Đổi camera" hidden>↺</button>
       </div>
-      <div id="cameraBottom" class="camera-bottom">Lọc màu đỏ, vàng, xanh · chưa dùng model AI</div>
+      <div id="cameraBottom" class="camera-bottom">Lọc màu theo độ chín đang chọn · chưa dùng model AI</div>
     </div>
     <div class="camera-actions">
       <button id="openCamera" class="secondary-btn" type="button">Mở camera</button>
@@ -45,6 +45,10 @@
         <label class="switch-line" for="autoDetect">Tự khoanh</label>
         <input id="autoDetect" type="checkbox" checked aria-label="Bật/tắt khoanh vùng tự động">
       </div>
+    </div>
+    <div id="manualBoxTools" class="library-toolbar" hidden>
+      <span id="manualSelectionStatus" class="selection-status">Chưa chọn khung</span>
+      <button id="removePreviewBox" class="secondary-btn compact delete-selected" type="button" disabled>Xóa khung đã chọn</button>
     </div>
     <div id="cameraError" class="camera-error" role="alert" hidden></div>
   </section>
@@ -154,6 +158,6 @@
   </div>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-<script type="module" src="./app.js?v=5"></script>
+<script type="module" src="./app.js?v=6"></script>
 </body>
 </html>
