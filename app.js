@@ -175,7 +175,7 @@ function clearPhotos(){
 }
 
 function readSettings(){
-  for(const id of ['ripeness','disease','interval','quality']){
+  for(const id of ['ripeness','disease','interval','quality','sensitivity']){
     $(id).value=getCfg(id,$(id).value);
     $(id).addEventListener('change',()=>putCfg(id,$(id).value));
   }
@@ -234,7 +234,7 @@ function analyzeFrame(){
   if(!stream||!video.videoWidth||document.hidden)return;
   if(overlay.width!==video.videoWidth||overlay.height!==video.videoHeight)setCanvasSize(video.videoWidth,video.videoHeight);
   if(autoMode){
-    try{liveBoxes=detectColorTomatoes(video,$('ripeness').value,384);}catch(err){console.warn('Detector',err);}
+    try{liveBoxes=detectColorTomatoes(video,$('ripeness').value,384,$('sensitivity').value);}catch(err){console.warn('Detector',err);}
   }else{liveBoxes=[];}
   drawOverlay();
 }
@@ -254,7 +254,7 @@ function drawOverlay(){
   if(dragging?.which==='preview'){
     const b=dragBox(dragging.start,dragging.current);ctx.strokeStyle='#fff';ctx.setLineDash([10,7]);ctx.strokeRect(b.x,b.y,b.w,b.h);ctx.setLineDash([]);
   }
-  $('cameraBottom').textContent=autoMode?`Lọc màu thử nghiệm · ${boxes.length} vùng · chưa dùng AI`:`Vẽ khung bằng ngón tay · ${boxes.length} vùng`;
+  $('cameraBottom').textContent=autoMode?`Dò đỏ · vàng · xanh · ${boxes.length} vùng (chưa dùng AI)`:`Vẽ khung bằng ngón tay · ${boxes.length} vùng`;
 }
 function framePos(e,elem,w,h){
   const r=elem.getBoundingClientRect(),s=Math.min(r.width/w,r.height/h);
@@ -298,7 +298,7 @@ async function snapPhoto(){
     const W=video.videoWidth,H=video.videoHeight,c=document.createElement('canvas');c.width=W;c.height=H;
     c.getContext('2d').drawImage(video,0,0,W,H);
     // Detect on this exact captured frame, not an earlier preview frame.
-    const detections=autoMode?detectColorTomatoes(c,$('ripeness').value,384):manualBoxes;
+    const detections=autoMode?detectColorTomatoes(c,$('ripeness').value,384,$('sensitivity').value):manualBoxes;
     const boxes=detections.map((b)=>({id:uid(),...boxNormalize(b,W,H),method:b.method||'color',ripeness:$('ripeness').value,disease:$('disease').value,attributes:attributeObject()})).filter(b=>b.w>8&&b.h>8);
     const blob=await toJpeg(c);
     const thumb=await makeThumbnail(c);
@@ -523,15 +523,7 @@ async function exportPendingZip(options={}){
     const bytes=records.reduce((total,rec)=>total+rec.blob.size,0);
     if(!auto&&bytes>150*1024*1024&&!confirm(`Lô này khoảng ${(bytes/1048576).toFixed(0)} MB. Trên iPhone 11, xuất ZIP quá lớn có thể khiến Safari đóng đột ngột. Vẫn xuất ${records.length} ảnh?`))return false;
     const json=JSON.stringify(exportLabelStudio(records),null,2);
-    const txt='Tomato Collector — Bản demo offline
-
-- images/: ảnh JPG gốc
-- label.json: bounding box, ripeness, disease theo cấu trúc Label Studio
-- Tọa độ x/y/w/h trong JSON: phần trăm khung hình (0-100)
-- Thuật toán auto trong bản demo chỉ dựa vào màu, cần duyệt/chỉnh nhãn trước khi train.
-- Muốn nhập Label Studio, phải cấu hình đường dẫn data.image tương ứng hệ thống lưu ảnh của bạn.
-- Ảnh lưu cục bộ trên iPhone không bị xóa sau khi xuất ZIP.
-';
+    const txt=`Tomato Collector — Bản offline\n\n- images/: ảnh JPG gốc\n- label.json: khung bao + độ chín + bệnh theo cấu trúc Label Studio\n- Tọa độ lưu theo phần trăm ảnh gốc (0-100)\n- Tự khoanh bằng màu (đỏ, vàng, xanh), chưa phải AI; cần kiểm tra trước khi huấn luyện.\n- Ảnh cục bộ trên iPhone vẫn giữ sau khi tạo ZIP.\n`;
     const entries=[{name:'label.json',data:json},{name:'README.txt',data:txt},...records.map(rec=>({name:'images/'+rec.filename,data:rec.blob}))];
     const blob=await createZip(entries,(completed,total)=>{
       $('exportBtn').textContent=`${auto?'Đang tự sao lưu':'Đang tạo'} ${completed}/${total}…`;
@@ -574,7 +566,7 @@ async function boot(){
   $('switchCam').addEventListener('click',()=>{rearCamera=!rearCamera;startCamera();});
   $('quality').addEventListener('change',()=>{if(stream)startCamera();});
   $('autoDetect').addEventListener('change',e=>{autoMode=e.target.checked;manualBoxes=[];liveBoxes=[];drawOverlay();});
-  $('ripeness').addEventListener('change',()=>{liveBoxes=[];analyzeFrame();});
+  $('sensitivity').addEventListener('change',()=>{liveBoxes=[];analyzeFrame();});
   overlay.addEventListener('pointerdown',addPreviewManual);overlay.addEventListener('pointermove',movePreviewManual);
   overlay.addEventListener('pointerup',finishPreviewManual);overlay.addEventListener('pointercancel',finishPreviewManual);
   $('capture').addEventListener('pointerdown',beginHold);$('capture').addEventListener('pointerup',endHold);

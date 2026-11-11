@@ -1,9 +1,14 @@
-# Bản v2
+# Lịch sử cập nhật
 
-- Đổi tệp JSON bên trong ZIP: `labels_train.json` → `label.json`.
-- Thêm giới hạn xuất theo lô: 200 và 500 ảnh (không giới hạn số ảnh tích lũy, phụ thuộc bộ nhớ iPhone).
-- Chọn nhiều ảnh, chọn tất cả, bỏ chọn, xóa một lần có xác nhận.
-- Thư viện xem thêm 24 ảnh/lượt để tránh nặng khi có hàng trăm ảnh.
-- Tính CRC32 theo khối 256 KiB, không nạp tất cả JPEG vào bộ nhớ JS.
-- Giữ nguyên IndexedDB `tomato-capture-v1`; không xóa dữ liệu ảnh cũ khi cập nhật trên cùng origin.
-- Tăng phiên bản cache offline v2 để nhận tệp mới.
+## v4
+- Sửa lọc màu nhận vùng đỏ, cam/vàng và xanh không phụ thuộc độ chín đang chọn.
+- Bổ sung lọc hình dạng để giảm vùng giả và tùy chọn độ nhạy Cân bằng / Cao.
+- Giữ chức năng chụp, chỉnh nhãn, xóa hàng loạt, tự tạo ZIP mỗi 100 ảnh, `label.json`.
+- Sửa lỗi chuỗi văn bản gây lỗi tải JavaScript trong v3.
+- Cập nhật cache offline lên `tomato-collector-offline-v4`.
+
+## v3
+- Tự đóng gói ZIP khi đủ 100 ảnh chưa sao lưu; xuất thủ công nếu chưa đủ.
+
+## v2
+- Đổi JSON sang `label.json`, chọn/xóa nhiều ảnh, tối ưu thư viện và ZIP.

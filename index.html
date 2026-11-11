@@ -37,7 +37,7 @@
         <span id="resolution" class="frost-label">CAMERA OFF</span>
         <button id="switchCam" class="frost-action" title="Đổi camera" hidden>↺</button>
       </div>
-      <div id="cameraBottom" class="camera-bottom">Phát hiện thử bằng màu sắc · chưa dùng model AI</div>
+      <div id="cameraBottom" class="camera-bottom">Lọc màu đỏ, vàng, xanh · chưa dùng model AI</div>
     </div>
     <div class="camera-actions">
       <button id="openCamera" class="secondary-btn" type="button">Mở camera</button>
@@ -116,6 +116,11 @@
         <select id="quality"><option value="1920">1080p (ưu tiên)</option><option value="1280">720p (tiết kiệm)</option></select>
       </div>
       <div class="field">
+        <label for="sensitivity">Độ nhạy tự khoanh</label>
+        <select id="sensitivity"><option value="balanced" selected>Cân bằng (ít nhầm hơn)</option><option value="high">Cao (dễ nhận trái nhỏ)</option></select>
+        <p class="field-help">Nhận diện thử cả cà chua đỏ, vàng, xanh, không phụ thuộc nhãn độ chín bạn chọn. Nếu chụp trên cây nhiều lá xanh, cần kiểm tra lại từng khung.</p>
+      </div>
+      <div class="field">
         <label>Tự động sao lưu ZIP</label>
         <p class="field-help" id="batchHelp">Tự động tạo ZIP mỗi khi đủ 100 ảnh chưa sao lưu. Nếu chưa đủ 100 ảnh, bạn có thể bấm nút Tải ảnh chưa sao lưu để lấy phần còn lại.</p>
       </div>
@@ -124,7 +129,7 @@
         <div class="add-attribute"><input id="attrName" maxlength="30" placeholder="Tên: giống, kích cỡ…"><input id="attrValue" maxlength="60" placeholder="Giá trị"><button id="addAttr" class="square-btn" type="button" aria-label="Thêm thuộc tính">+</button></div>
         <div id="attrList" class="attr-list"></div>
       </div>
-      <div class="notice">Tự khoanh hiện sử dụng thuật toán lọc màu đỏ/xanh, chỉ để thử nghiệm trên nền đơn giản. Trái xanh giữa lá, bóng chói và nhiều quả chồng nhau có thể nhận sai. Bạn có thể sửa vùng trước khi xuất.</div>
+      <div class="notice">Tự khoanh hiện chỉ dùng lọc màu + hình dạng để nhận các vùng đỏ, vàng, xanh, chưa phải AI. Trái xanh giữa lá, bóng chói và nhiều quả chồng nhau có thể nhận sai. Bạn có thể sửa vùng trước khi xuất.</div>
       <button id="clearAll" class="danger-link" type="button">Xóa toàn bộ ảnh đã lưu trên điện thoại</button>
     </div>
   </details>
