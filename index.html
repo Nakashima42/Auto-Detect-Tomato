@@ -83,11 +83,21 @@
     <div class="section-heading">
       <div>
         <h2>Ảnh đã lưu</h2>
-        <p>Lưu trực tiếp trên thiết bị này</p>
+        <p>Ảnh được lưu tự động trên điện thoại</p>
       </div>
-      <button id="exportBtn" class="secondary-btn compact" type="button">Xuất ZIP</button>
+      <button id="exportBtn" class="secondary-btn compact" type="button">Tải ảnh chưa sao lưu</button>
+    </div>
+    <div class="library-toolbar">
+      <button id="selectMode" class="secondary-btn compact" type="button">Chọn ảnh</button>
+      <span id="selectionStatus" class="selection-status" hidden>Đã chọn 0 ảnh</span>
+      <div id="selectionActions" class="selection-actions" hidden>
+        <button id="selectAll" class="secondary-btn compact" type="button">Chọn tất cả</button>
+        <button id="clearSelection" class="secondary-btn compact" type="button">Bỏ chọn</button>
+        <button id="deleteSelected" class="secondary-btn compact delete-selected" type="button" disabled>Xóa ảnh đã chọn (0)</button>
+      </div>
     </div>
     <div id="gallery" class="gallery"><div class="gallery-empty">Chưa có ảnh nào</div></div>
+    <button id="loadMore" class="secondary-btn load-more" type="button" hidden>Xem thêm ảnh</button>
     <div id="downloadArea" class="download-area" hidden>
       <a id="downloadLink" class="download-link" download="tomato_dataset.zip">Tải tệp ZIP đã tạo ↓</a>
       <small>Trên iPhone, chọn Lưu vào Tệp sau khi tải.</small>
@@ -106,9 +116,8 @@
         <select id="quality"><option value="1920">1080p (ưu tiên)</option><option value="1280">720p (tiết kiệm)</option></select>
       </div>
       <div class="field">
-        <label for="batch">Số ảnh tối đa mỗi tệp ZIP</label>
-        <select id="batch"><option value="30">30 ảnh</option><option value="50" selected>50 ảnh</option><option value="100">100 ảnh</option></select>
-        <p class="field-help" id="batchHelp">Xuất theo từng lô, giữ toàn bộ ảnh đã chụp trên máy.</p>
+        <label>Tự động sao lưu ZIP</label>
+        <p class="field-help" id="batchHelp">Tự động tạo ZIP mỗi khi đủ 100 ảnh chưa sao lưu. Nếu chưa đủ 100 ảnh, bạn có thể bấm nút Tải ảnh chưa sao lưu để lấy phần còn lại.</p>
       </div>
       <div class="field">
         <label>Thuộc tính bổ sung (áp dụng cho cả phiên chụp)</label>
@@ -119,7 +128,7 @@
       <button id="clearAll" class="danger-link" type="button">Xóa toàn bộ ảnh đã lưu trên điện thoại</button>
     </div>
   </details>
-  <footer>Không tài khoản · Không gửi ảnh lên máy chủ · Ảnh và nhãn chỉ lưu cục bộ</footer>
+  <footer>Không tài khoản · Không upload ảnh · Dữ liệu lưu bằng IndexedDB; hãy sao lưu ZIP định kỳ</footer>
 </main>
 
 <div id="reviewModal" class="modal" hidden>

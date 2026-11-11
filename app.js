@@ -13,12 +13,21 @@ let attrList = [];
 let photoUnderReview = null, selectedBox = -1, reviewImageUrl = null;
 let dragging = null, originalReviewBoxes = null;
 let toastTimer = null;
-let batchNext = 0;
 let galleryUrls = [];
+let exportInProgress = false;
+let autoExportQueued = false;
+const GALLERY_PAGE_SIZE = 24;
+let galleryLimit = GALLERY_PAGE_SIZE;
+let selectionMode = false;
+const selectedPhotoIds = new Set();
 
 function tell(message){
   const t=$('toast');t.textContent=message;t.hidden=false;
   clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.hidden=true,3300);
+}
+function invalidateZip(){
+  if(lastDownloadUrl){URL.revokeObjectURL(lastDownloadUrl);lastDownloadUrl=null;}
+  $('downloadArea').hidden=true;
 }
 function getCfg(key, fallback){try {return localStorage.getItem('tomato:'+key) ?? fallback;}catch{return fallback;}}
 function putCfg(key, value){try {localStorage.setItem('tomato:'+key,String(value));}catch{}}
@@ -26,8 +35,30 @@ function uid(){return (globalThis.crypto?.randomUUID?.() || 'box-'+Date.now()+'-
 
 function openDatabase(){
   return new Promise((resolve,reject)=>{
-    const req=indexedDB.open('tomato-capture-v1',1);
-    req.onupgradeneeded=()=>{let store=req.result.createObjectStore('photos',{keyPath:'id',autoIncrement:true});store.createIndex('createdAt','createdAt');};
+    const req=indexedDB.open('tomato-capture-v1',2);
+    req.onupgradeneeded=(event)=>{
+      const database=req.result;
+      let store;
+      if(event.oldVersion<1){
+        store=database.createObjectStore('photos',{keyPath:'id',autoIncrement:true});
+        store.createIndex('createdAt','createdAt');
+      }else{
+        store=req.transaction.objectStore('photos');
+      }
+      if(!store.indexNames.contains('backupStatus'))store.createIndex('backupStatus','backupStatus');
+      if(!store.indexNames.contains('exportedAt'))store.createIndex('exportedAt','exportedAt');
+      if(event.oldVersion<2){
+        store.openCursor().onsuccess=(e)=>{
+          const cursor=e.target.result;
+          if(!cursor)return;
+          const value=cursor.value;
+          if(!value.backupStatus)value.backupStatus='pending';
+          if(!('exportedAt' in value))value.exportedAt='';
+          cursor.update(value);
+          cursor.continue();
+        };
+      }
+    };
     req.onsuccess=()=>resolve(req.result);
     req.onerror=()=>reject(req.error);
   });
@@ -53,6 +84,47 @@ function countPhotos(){
     req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
   });
 }
+function countByBackupStatus(status){
+  return new Promise((resolve,reject)=>{
+    const req=db.transaction('photos').objectStore('photos').index('backupStatus').count(status);
+    req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+  });
+}
+function pendingPhotos(limit=100){
+  return new Promise((resolve,reject)=>{
+    const items=[];
+    const req=db.transaction('photos').objectStore('photos').index('backupStatus').openCursor('pending');
+    req.onsuccess=()=>{
+      const cursor=req.result;
+      if(!cursor||items.length>=limit){resolve(items);return;}
+      items.push(cursor.value);
+      cursor.continue();
+    };
+    req.onerror=()=>reject(req.error);
+  });
+}
+function markPhotosBackedUp(ids,batchName){
+  if(!ids.length)return Promise.resolve();
+  const stamp=new Date().toISOString();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction('photos','readwrite');
+    const store=tx.objectStore('photos');
+    for(const id of ids){
+      const req=store.get(Number(id));
+      req.onsuccess=()=>{
+        const rec=req.result;
+        if(!rec)return;
+        rec.backupStatus='exported';
+        rec.exportedAt=stamp;
+        rec.exportedBatch=batchName;
+        store.put(rec);
+      };
+    }
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error||new Error('Không thể cập nhật trạng thái sao lưu'));
+    tx.onabort=()=>reject(tx.error||new Error('Cập nhật trạng thái sao lưu bị hủy'));
+  });
+}
 function recentPhotos(limit=8){
   return new Promise((resolve,reject)=>{
     const items=[],req=db.transaction('photos').objectStore('photos').openCursor(null,'prev');
@@ -71,6 +143,24 @@ function loadBatch(offset,limit){
     };req.onerror=()=>reject(req.error);
   });
 }
+function allPhotoIds(){
+  return new Promise((resolve,reject)=>{
+    const req=db.transaction('photos').objectStore('photos').getAllKeys();
+    req.onsuccess=()=>resolve(req.result.map(Number));
+    req.onerror=()=>reject(req.error);
+  });
+}
+function deletePhotos(ids){
+  if(!ids.length)return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction('photos','readwrite');
+    const store=tx.objectStore('photos');
+    for(const id of ids)store.delete(Number(id));
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error||new Error('Không thể xóa ảnh'));
+    tx.onabort=()=>reject(tx.error||new Error('Xóa ảnh bị hủy'));
+  });
+}
 function deletePhoto(id){
   return new Promise((resolve,reject)=>{
     const tx=db.transaction('photos','readwrite');tx.objectStore('photos').delete(Number(id));
@@ -85,7 +175,7 @@ function clearPhotos(){
 }
 
 function readSettings(){
-  for(const id of ['ripeness','disease','interval','quality','batch']){
+  for(const id of ['ripeness','disease','interval','quality']){
     $(id).value=getCfg(id,$(id).value);
     $(id).addEventListener('change',()=>putCfg(id,$(id).value));
   }
@@ -192,6 +282,14 @@ function finishPreviewManual(e){
 async function toJpeg(canvas,quality=.87){
   return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Không mã hóa được ảnh')),'image/jpeg',quality));
 }
+async function makeThumbnail(canvas){
+  const t=document.createElement('canvas');
+  const scale=Math.min(1,240/Math.max(canvas.width,canvas.height));
+  t.width=Math.max(1,Math.round(canvas.width*scale));
+  t.height=Math.max(1,Math.round(canvas.height*scale));
+  t.getContext('2d').drawImage(canvas,0,0,t.width,t.height);
+  return toJpeg(t,.64);
+}
 function boxNormalize(box,W,H){return{x:Math.max(0,Math.min(W-1,box.x)),y:Math.max(0,Math.min(H-1,box.y)),w:Math.max(0,Math.min(W-box.x,box.w)),h:Math.max(0,Math.min(H-box.y,box.h))};}
 async function snapPhoto(){
   if(!stream||!video.videoWidth||snapping)return;
@@ -203,9 +301,11 @@ async function snapPhoto(){
     const detections=autoMode?detectColorTomatoes(c,$('ripeness').value,384):manualBoxes;
     const boxes=detections.map((b)=>({id:uid(),...boxNormalize(b,W,H),method:b.method||'color',ripeness:$('ripeness').value,disease:$('disease').value,attributes:attributeObject()})).filter(b=>b.w>8&&b.h>8);
     const blob=await toJpeg(c);
+    const thumb=await makeThumbnail(c);
     const ts=new Date();const filename='tomato_'+ts.toISOString().replace(/[:.]/g,'-')+'_'+Math.random().toString(36).slice(2,5)+'.jpg';
-    await savePhoto({filename,blob,width:W,height:H,createdAt:ts.toISOString(),boxes,attributes:attributeObject(),captureRipeness:$('ripeness').value,captureDisease:$('disease').value});
+    await savePhoto({filename,blob,thumb,width:W,height:H,createdAt:ts.toISOString(),boxes,attributes:attributeObject(),captureRipeness:$('ripeness').value,captureDisease:$('disease').value,backupStatus:'pending',exportedAt:'',exportedBatch:''});
     await updateLibrary();
+    await maybeAutoExport();
     if(boxes.length===0)tell('Đã lưu ảnh, chưa phát hiện khung. Có thể mở ảnh để vẽ thêm.');
   }catch(err){tell('Lỗi lưu ảnh: '+(err?.message||err));endHold();}
   finally{snapping=false;button.classList.toggle('pressed',holding);}
@@ -221,18 +321,54 @@ function endHold(){
   $('capture').classList.remove('pressed');
 }
 
+function updateSelectionControls(){
+  $('selectMode').textContent=selectionMode?'Đóng chọn ảnh':'Chọn ảnh';
+  $('selectionActions').hidden=!selectionMode;
+  $('selectionStatus').hidden=!selectionMode;
+  const num=selectedPhotoIds.size;
+  $('selectionStatus').textContent=`Đã chọn ${num} / ${totalCount} ảnh`;
+  $('deleteSelected').textContent=`Xóa đã chọn (${num})`;
+  $('deleteSelected').disabled=!num;
+  $('selectAll').disabled=!totalCount||num===totalCount;
+  $('clearSelection').disabled=!num;
+}
+function toggleSelection(id){
+  if(selectedPhotoIds.has(id))selectedPhotoIds.delete(id);else selectedPhotoIds.add(id);
+  const btn=$('gallery').querySelector(`[data-photo-id="${id}"]`);
+  if(btn){btn.classList.toggle('is-selected',selectedPhotoIds.has(id));btn.setAttribute('aria-pressed',String(selectedPhotoIds.has(id)));}
+  updateSelectionControls();
+}
 async function updateLibrary(){
   if(!db)return;
-  totalCount=await countPhotos();$('count').textContent=totalCount+' ảnh';
-  const items=await recentPhotos(8), gallery=$('gallery');
+  totalCount=await countPhotos();
+  const pendingCount=await countByBackupStatus('pending');
+  const exportedCount=Math.max(0,totalCount-pendingCount);
+  $('count').textContent=`${totalCount} ảnh đã lưu · ${pendingCount} chưa sao lưu · ${exportedCount} đã sao lưu`;
+  $('batchHelp').textContent=`Tự động tạo ZIP mỗi khi đủ 100 ảnh chưa sao lưu. Hiện còn ${pendingCount} ảnh chưa sao lưu.`;
+  const items=await recentPhotos(galleryLimit),gallery=$('gallery');
   galleryUrls.forEach(url=>URL.revokeObjectURL(url));galleryUrls=[];gallery.replaceChildren();
-  if(!items.length){const el=document.createElement('div');el.className='gallery-empty';el.textContent='Chưa có ảnh nào';gallery.appendChild(el);return;}
-  for(const item of items){
-    const btn=document.createElement('button');btn.type='button';btn.className='gallery-item';btn.title='Mở ảnh '+item.filename;
-    const img=document.createElement('img');const url=URL.createObjectURL(item.blob);galleryUrls.push(url);img.src=url;img.loading='lazy';img.alt='Ảnh cà chua';
-    const n=document.createElement('span');n.className='num';n.textContent=item.boxes.length+' box';
-    btn.append(img,n);btn.addEventListener('click',()=>openReview(item.id));gallery.appendChild(btn);
+  $('loadMore').hidden=totalCount<=galleryLimit;
+  if(!items.length){
+    const el=document.createElement('div');el.className='gallery-empty';el.textContent='Chưa có ảnh nào';gallery.appendChild(el);
+    updateSelectionControls();return;
   }
+  for(const item of items){
+    const btn=document.createElement('button');btn.type='button';btn.className='gallery-item';
+    btn.dataset.photoId=String(item.id);
+    const checked=selectedPhotoIds.has(item.id);
+    btn.classList.toggle('is-selected',checked);
+    btn.setAttribute('aria-pressed',String(selectionMode&&checked));
+    btn.title=(selectionMode?'Chọn ảnh ':'Mở ảnh ')+item.filename;
+    const img=document.createElement('img'),url=URL.createObjectURL(item.thumb||item.blob);
+    galleryUrls.push(url);img.src=url;img.loading='lazy';img.alt='Ảnh cà chua';
+    const n=document.createElement('span');n.className='num';n.textContent=item.boxes.length+' box';
+    const check=document.createElement('span');check.className='selection-mark';check.textContent=checked?'✓':'';
+    btn.append(img,n,check);
+    if(selectionMode)btn.classList.add('is-selectable');
+    btn.addEventListener('click',()=>selectionMode?toggleSelection(item.id):openReview(item.id));
+    gallery.appendChild(btn);
+  }
+  updateSelectionControls();
 }
 function fillChoice(sel,val){$(sel).value=val;}
 function redrawReview(){
@@ -309,9 +445,23 @@ function exportLabelStudio(records){
 
 // Offline ZIP writer: STORE method only (JPEG is already compressed).
 const enc = new TextEncoder();
-function crc32(data){
+const CRC_TABLE=Uint32Array.from({length:256},(_,i)=>{
+  let c=i;
+  for(let j=0;j<8;j++)c=(c>>>1)^((c&1)?0xedb88320:0);
+  return c>>>0;
+});
+function crc32Chunk(data,c){
+  for(const v of data)c=CRC_TABLE[(c^v)&0xff]^(c>>>8);
+  return c>>>0;
+}
+async function crc32Blob(blob){
+  // Read at most 256 KiB each time: 500 JPEGs need not be loaded into RAM together.
+  const chunkSize=256*1024;
   let c=0xffffffff;
-  for(const v of data){c^=v;for(let j=0;j<8;j++)c=(c>>>1)^((c&1)?0xedb88320:0);}
+  for(let start=0;start<blob.size;start+=chunkSize){
+    const bytes=new Uint8Array(await blob.slice(start,Math.min(start+chunkSize,blob.size)).arrayBuffer());
+    c=crc32Chunk(bytes,c);
+  }
   return (c^0xffffffff)>>>0;
 }
 function zipHeader(n){return new DataView(new ArrayBuffer(n));}
@@ -325,41 +475,97 @@ function zipCentral(name,crc,size,offset){
   d.setUint16(10,0,true);d.setUint32(16,crc,true);d.setUint32(20,size,true);d.setUint32(24,size,true);d.setUint16(28,name.length,true);
   d.setUint32(42,offset,true);return new Uint8Array(d.buffer);
 }
-async function createZip(entries){
+async function createZip(entries,onProgress){
   const parts=[],central=[];let offset=0,centralLen=0;
-  for(const item of entries){
-    const name=enc.encode(item.name);const bytes=item.data instanceof Blob?new Uint8Array(await item.data.arrayBuffer()):enc.encode(item.data);
-    if(bytes.byteLength>0xffffffff)throw Error('Tệp quá lớn để tạo ZIP');
-    const crc=crc32(bytes),local=zipLocal(name,crc,bytes.length);
-    parts.push(local,name,bytes);central.push(zipCentral(name,crc,bytes.length,offset),name);
-    offset+=local.length+name.length+bytes.length;centralLen+=46+name.length;
-    if(offset>0xffffffff)throw Error('ZIP quá lớn');
+  if(entries.length>65535)throw Error('Quá nhiều tệp trong ZIP');
+  for(const [index,item] of entries.entries()){
+    const name=enc.encode(item.name);
+    const data=item.data instanceof Blob?item.data:new Blob([enc.encode(item.data)]);
+    if(data.size>0xffffffff)throw Error('Tệp quá lớn để tạo ZIP');
+    const crc=await crc32Blob(data),local=zipLocal(name,crc,data.size);
+    // Keep JPEG as Blob, avoiding conversion of every full image to a JS byte array.
+    parts.push(local,name,data);central.push(zipCentral(name,crc,data.size,offset),name);
+    offset+=local.length+name.length+data.size;centralLen+=46+name.length;
+    if(offset>0xffffffff)throw Error('ZIP quá lớn (giới hạn 4 GB)');
+    if(index%10===0||index===entries.length-1)onProgress?.(index+1,entries.length);
   }
   const e=zipHeader(22);e.setUint32(0,0x06054b50,true);e.setUint16(8,entries.length,true);e.setUint16(10,entries.length,true);
   e.setUint32(12,centralLen,true);e.setUint32(16,offset,true);
   return new Blob([...parts,...central,new Uint8Array(e.buffer)],{type:'application/zip'});
 }
-async function exportZip(){
-  if(!totalCount){tell('Chưa có ảnh để xuất.');return;}
-  const limit=+$('batch').value||50,totalBatches=Math.ceil(totalCount/limit);
-  const part=(batchNext%totalBatches)+1;$('exportBtn').disabled=true;$('exportBtn').textContent='Đang tạo…';
+function nextZipSequence(){
+  const current=+(getCfg('zipSeq','1'))||1;
+  putCfg('zipSeq',String(current+1));
+  return current;
+}
+function triggerDownload(url,filename){
+  const link=$('downloadLink');
+  link.href=url;link.download=filename;
+  link.textContent=`Tải ${filename} ↓`;
+  $('downloadArea').hidden=false;
+  requestAnimationFrame(()=>link.click());
+}
+async function exportPendingZip(options={}){
+  const auto=!!options.auto;
+  if(exportInProgress)return false;
+  const pendingCount=await countByBackupStatus('pending');
+  if(!pendingCount){
+    if(!auto)tell('Không còn ảnh chưa sao lưu.');
+    return false;
+  }
+  const limit=auto?100:Math.min(100,pendingCount);
+  exportInProgress=true;
+  $('exportBtn').disabled=true;
+  $('exportBtn').textContent=auto?'Đang tự sao lưu…':'Đang tạo…';
   try{
-    const records=await loadBatch((part-1)*limit,limit);
-    if(!records.length)throw Error('Không có ảnh trong lô này');
+    const records=await pendingPhotos(limit);
+    if(!records.length)throw Error('Không có ảnh chờ sao lưu');
+    const bytes=records.reduce((total,rec)=>total+rec.blob.size,0);
+    if(!auto&&bytes>150*1024*1024&&!confirm(`Lô này khoảng ${(bytes/1048576).toFixed(0)} MB. Trên iPhone 11, xuất ZIP quá lớn có thể khiến Safari đóng đột ngột. Vẫn xuất ${records.length} ảnh?`))return false;
     const json=JSON.stringify(exportLabelStudio(records),null,2);
-    const txt='Tomato Collector — Bản demo offline\n\n- images/: ảnh JPG gốc\n- labels_train.json: bounding box, ripeness, disease theo cấu trúc Label Studio\n- Tọa độ x/y/w/h trong JSON: phần trăm khung hình (0-100)\n- Thuật toán auto trong bản demo chỉ dựa vào màu, cần duyệt/chỉnh nhãn trước khi train.\n- Muốn nhập Label Studio, phải cấu hình đường dẫn data.image tương ứng hệ thống lưu ảnh của bạn.\n- Ảnh lưu cục bộ trên iPhone không bị xóa sau khi xuất ZIP.\n';
-    const entries=[{name:'labels_train.json',data:json},{name:'README.txt',data:txt},...records.map(rec=>({name:'images/'+rec.filename,data:rec.blob}))];
-    const blob=await createZip(entries);
+    const txt='Tomato Collector — Bản demo offline
+
+- images/: ảnh JPG gốc
+- label.json: bounding box, ripeness, disease theo cấu trúc Label Studio
+- Tọa độ x/y/w/h trong JSON: phần trăm khung hình (0-100)
+- Thuật toán auto trong bản demo chỉ dựa vào màu, cần duyệt/chỉnh nhãn trước khi train.
+- Muốn nhập Label Studio, phải cấu hình đường dẫn data.image tương ứng hệ thống lưu ảnh của bạn.
+- Ảnh lưu cục bộ trên iPhone không bị xóa sau khi xuất ZIP.
+';
+    const entries=[{name:'label.json',data:json},{name:'README.txt',data:txt},...records.map(rec=>({name:'images/'+rec.filename,data:rec.blob}))];
+    const blob=await createZip(entries,(completed,total)=>{
+      $('exportBtn').textContent=`${auto?'Đang tự sao lưu':'Đang tạo'} ${completed}/${total}…`;
+    });
     if(lastDownloadUrl)URL.revokeObjectURL(lastDownloadUrl);
     lastDownloadUrl=URL.createObjectURL(blob);
-    const link=$('downloadLink');link.href=lastDownloadUrl;link.download='tomato_dataset_'+String(part).padStart(2,'0')+'_of_'+String(totalBatches).padStart(2,'0')+'.zip';
-    link.textContent=`Tải ZIP · lô ${part}/${totalBatches} (${records.length} ảnh) ↓`;
-    $('downloadArea').hidden=false;batchNext=part%totalBatches;
-    $('batchHelp').textContent=`Có ${totalCount} ảnh · ${totalBatches} lô. Mỗi lần bấm Xuất ZIP sẽ tạo lô tiếp theo.`;
-    tell('Đã tạo ZIP. Bấm nút Tải ZIP để lưu vào Tệp.');
-    $('downloadArea').scrollIntoView({behavior:'smooth',block:'nearest'});
-  }catch(err){tell('Không thể tạo ZIP: '+(err?.message||err));}
-  finally{$('exportBtn').disabled=false;$('exportBtn').textContent='Xuất ZIP';}
+    const seq=nextZipSequence();
+    const filename=`tomato_dataset_${String(seq).padStart(4,'0')}_${String(records.length).padStart(3,'0')}imgs.zip`;
+    await markPhotosBackedUp(records.map(r=>r.id),filename);
+    triggerDownload(lastDownloadUrl,filename);
+    if(auto)tell(`Đủ 100 ảnh, đã tự tạo ${filename}. Nếu iPhone hỏi, hãy chọn Lưu vào Tệp.`);
+    else tell(`Đã tạo ${filename}. Nếu iPhone hỏi, hãy chọn Lưu vào Tệp.`);
+    await updateLibrary();
+    return true;
+  }catch(err){
+    tell('Không thể tạo ZIP: '+(err?.message||err));
+    return false;
+  }finally{
+    exportInProgress=false;
+    $('exportBtn').disabled=false;
+    $('exportBtn').textContent='Tải ảnh chưa sao lưu';
+  }
+}
+async function maybeAutoExport(){
+  if(exportInProgress||autoExportQueued)return;
+  const pendingCount=await countByBackupStatus('pending');
+  if(pendingCount<100)return;
+  autoExportQueued=true;
+  try{
+    while(await countByBackupStatus('pending')>=100){
+      const ok=await exportPendingZip({auto:true});
+      if(!ok)break;
+    }
+  }finally{autoExportQueued=false;}
 }
 
 async function boot(){
@@ -377,7 +583,35 @@ async function boot(){
   $('capture').addEventListener('keydown',e=>{if((e.code==='Space'||e.code==='Enter')&&!holding)beginHold(e);});
   $('capture').addEventListener('keyup',e=>{if(e.code==='Space'||e.code==='Enter')endHold();});
   window.addEventListener('blur',endHold);document.addEventListener('visibilitychange',()=>{if(document.hidden)endHold();});
-  $('exportBtn').addEventListener('click',exportZip);
+  $('exportBtn').addEventListener('click',()=>exportPendingZip({auto:false}));
+  $('selectMode').addEventListener('click',async()=>{
+    selectionMode=!selectionMode;
+    if(!selectionMode)selectedPhotoIds.clear();
+    await updateLibrary();
+  });
+  $('selectAll').addEventListener('click',async()=>{
+    try{
+      const ids=await allPhotoIds();
+      selectedPhotoIds.clear();ids.forEach(id=>selectedPhotoIds.add(id));
+      await updateLibrary();
+    }catch(err){tell('Không chọn được tất cả ảnh: '+err.message);}
+  });
+  $('clearSelection').addEventListener('click',async()=>{selectedPhotoIds.clear();await updateLibrary();});
+  $('deleteSelected').addEventListener('click',async()=>{
+    const ids=[...selectedPhotoIds];
+    if(!ids.length)return;
+    if(!confirm(`Xóa vĩnh viễn ${ids.length} ảnh đã chọn cùng nhãn? Hãy xuất ZIP sao lưu trước khi xóa.`))return;
+    $('deleteSelected').disabled=true;
+    try{
+      await deletePhotos(ids);
+      selectedPhotoIds.clear();
+      invalidateZip();
+      await updateLibrary();tell(`Đã xóa ${ids.length} ảnh.`);
+    }catch(err){tell('Lỗi xóa nhiều ảnh: '+(err?.message||err));updateSelectionControls();}
+  });
+  $('loadMore').addEventListener('click',async()=>{
+    galleryLimit+=GALLERY_PAGE_SIZE;await updateLibrary();
+  });
   $('closeReview').addEventListener('click',closeReview);
   $('reviewCanvas').addEventListener('pointerdown',reviewPointerDown);$('reviewCanvas').addEventListener('pointermove',reviewPointerMove);
   $('reviewCanvas').addEventListener('pointerup',reviewPointerEnd);$('reviewCanvas').addEventListener('pointercancel',()=>{dragging=null;redrawReview();});
@@ -391,11 +625,11 @@ async function boot(){
   });
   $('deletePhoto').addEventListener('click',async()=>{
     if(!photoUnderReview||!confirm('Xóa vĩnh viễn ảnh này và tất cả nhãn?'))return;
-    await deletePhoto(photoUnderReview.id);closeReview();await updateLibrary();tell('Đã xóa ảnh.');
+    await deletePhoto(photoUnderReview.id);selectedPhotoIds.delete(photoUnderReview.id);closeReview();invalidateZip();await updateLibrary();tell('Đã xóa ảnh.');
   });
   $('clearAll').addEventListener('click',async()=>{
     if(!totalCount||!confirm('Xóa tất cả '+totalCount+' ảnh đã lưu trên máy? Hãy xuất ZIP trước.')||!confirm('Xác nhận lần 2: xóa vĩnh viễn tất cả?'))return;
-    await clearPhotos();batchNext=0;$('downloadArea').hidden=true;await updateLibrary();tell('Đã xóa tất cả ảnh.');
+    await clearPhotos();selectedPhotoIds.clear();invalidateZip();await updateLibrary();tell('Đã xóa tất cả ảnh.');
   });
   try{db=await openDatabase();await updateLibrary();}catch(e){tell('Không mở được bộ nhớ offline: '+(e?.message||e));$('capture').disabled=true;$('openCamera').disabled=true;}
   if('serviceWorker' in navigator){
