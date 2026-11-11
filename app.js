@@ -176,8 +176,10 @@ function clearPhotos(){
 
 function readSettings(){
   for(const id of ['ripeness','disease','interval','quality','sensitivity']){
-    $(id).value=getCfg(id,$(id).value);
-    $(id).addEventListener('change',()=>putCfg(id,$(id).value));
+    const elem=$(id);
+    if(!elem)continue; // Compatible with older HTML temporarily cached by Safari.
+    elem.value=getCfg(id,elem.value);
+    elem.addEventListener('change',()=>putCfg(id,elem.value));
   }
   try{attrList=JSON.parse(getCfg('attrs','[]'));if(!Array.isArray(attrList))attrList=[];}catch{attrList=[];}
   attrList=attrList.slice(0,8).filter(x=>x&&typeof x.name==='string');renderAttributes();
@@ -200,33 +202,91 @@ function renderAttributes(){
   }
 }
 function attributeObject(){return Object.fromEntries(attrList.map(a=>[a.name,a.value]));}
+function getSensitivity(){return $('sensitivity')?.value||'balanced';}
+function cameraErrorText(error){
+  const name=error?.name||'';
+  if(name==='NotAllowedError'||name==='PermissionDeniedError')return 'Safari đang từ chối camera. Mở trang bằng Safari, vào Cài đặt trang web (aA) → Camera → Cho phép, sau đó thử lại.';
+  if(name==='NotFoundError'||name==='DevicesNotFoundError')return 'Không tìm thấy camera phù hợp. Hãy thử lại hoặc kiểm tra camera bằng ứng dụng Camera của iPhone.';
+  if(name==='NotReadableError'||name==='TrackStartError')return 'Camera có thể đang được ứng dụng khác dùng. Hãy đóng ứng dụng camera/cuộc gọi khác rồi thử lại.';
+  if(name==='OverconstrainedError')return 'Không dùng được cấu hình độ phân giải đã chọn. Hãy thử 720p hoặc mở lại ứng dụng.';
+  if(name==='AbortError')return 'Camera bị ngắt khi khởi động. Hãy mở lại hoặc khởi động lại Safari.';
+  if(name==='SecurityError'||name==='TypeError')return 'Camera chỉ được phép trên trang HTTPS hoặc ứng dụng đã cài hợp lệ. Hãy mở đúng đường dẫn HTTPS bằng Safari.';
+  return 'Không mở được camera: '+(error?.message||name||String(error));
+}
+function setCameraError(message){
+  const elem=$('cameraError');
+  if(elem){elem.textContent=message;elem.hidden=!message;}
+  if(message)tell(message);
+}
+let openingCamera=false;
 
 async function startCamera(){
-  if(!navigator.mediaDevices?.getUserMedia){tell('Camera yêu cầu HTTPS hoặc localhost.');return;}
+  if(openingCamera)return;
+  setCameraError('');
+  if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){
+    setCameraError('Camera yêu cầu HTTPS. Hãy mở bằng Safari tại đường dẫn GitHub Pages https://…github.io/… (không mở tệp HTML trong ứng dụng Tệp).');
+    return;
+  }
+  openingCamera=true;
   stopCamera();
-  const width=+$('quality').value;
-  const constraints={audio:false,video:{facingMode:{ideal:rearCamera?'environment':'user'},width:{ideal:width},height:{ideal:Math.round(width*9/16)},frameRate:{ideal:30,max:30}}};
+  const openButton=$('openCamera');
+  openButton.disabled=true;
+  openButton.textContent='Đang mở camera…';
+  const width=Number($('quality')?.value)||1280;
+  const facing=rearCamera?'environment':'user';
+  const constraints={audio:false,video:{facingMode:{ideal:facing},width:{ideal:width},height:{ideal:Math.round(width*9/16)},frameRate:{ideal:30,max:30}}};
   try{
-    stream=await navigator.mediaDevices.getUserMedia(constraints);
-    video.srcObject=stream;await video.play();
-    $('emptyView').hidden=true;$('capture').disabled=false;$('openCamera').textContent='Dừng camera';$('switchCam').hidden=false;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia(constraints);
+    }catch(error){
+      // Some iOS/Safari cameras reject size or facing constraints.
+      // Retry once with minimal camera constraints, without requesting a specific resolution.
+      if(!['OverconstrainedError','NotFoundError','DevicesNotFoundError'].includes(error?.name))throw error;
+      stream=await navigator.mediaDevices.getUserMedia({audio:false,video:true});
+    }
+    video.muted=true;
+    video.playsInline=true;
+    video.srcObject=stream;
+    await video.play();
+    // Wait for metadata if iOS initially reports 0x0.
+    if(!video.videoWidth){
+      await new Promise((resolve,reject)=>{
+        const timeout=setTimeout(()=>{cleanup();reject(new Error('Không nhận được khung hình từ camera'));},5000);
+        const ready=()=>{cleanup();resolve();};
+        function cleanup(){clearTimeout(timeout);video.removeEventListener('loadedmetadata',ready);}
+        video.addEventListener('loadedmetadata',ready,{once:true});
+        if(video.videoWidth)ready();
+      });
+    }
+    $('emptyView').hidden=true;
+    $('capture').disabled=false;
+    $('switchCam').hidden=false;
     $('resolution').textContent=video.videoWidth+' × '+video.videoHeight;
     setCanvasSize(video.videoWidth,video.videoHeight);
     manualBoxes=[];liveBoxes=[];
     renderTimer=setInterval(analyzeFrame,420);
     analyzeFrame();lastCameraError='';
-  }catch(err){
-    lastCameraError=err?.message||String(err);
-    $('emptyView').hidden=false;$('emptyView').querySelector('div:nth-child(2)').textContent='Không mở được camera';
-    tell('Lỗi camera: '+lastCameraError);
+  }catch(error){
+    lastCameraError=error?.message||String(error);
     stopCamera();
+    setCameraError(cameraErrorText(error));
+  }finally{
+    openingCamera=false;
+    openButton.disabled=false;
+    openButton.textContent=stream?'Dừng camera':'Mở camera';
   }
 }
 function stopCamera(){
-  endHold();if(renderTimer){clearInterval(renderTimer);renderTimer=null;}
+  endHold();
+  if(renderTimer){clearInterval(renderTimer);renderTimer=null;}
+  try{video.pause();}catch{}
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
-  video.srcObject=null;$('capture').disabled=true;$('openCamera').textContent='Mở camera';$('switchCam').hidden=true;
-  $('emptyView').hidden=false;$('resolution').textContent='CAMERA OFF';
+  video.srcObject=null;
+  $('capture').disabled=true;
+  $('openCamera').textContent='Mở camera';
+  $('switchCam').hidden=true;
+  $('emptyView').hidden=false;
+  $('resolution').textContent='CAMERA OFF';
   liveBoxes=[];manualBoxes=[];drawOverlay();
 }
 function setCanvasSize(w,h){overlay.width=w;overlay.height=h;}
@@ -234,7 +294,7 @@ function analyzeFrame(){
   if(!stream||!video.videoWidth||document.hidden)return;
   if(overlay.width!==video.videoWidth||overlay.height!==video.videoHeight)setCanvasSize(video.videoWidth,video.videoHeight);
   if(autoMode){
-    try{liveBoxes=detectColorTomatoes(video,$('ripeness').value,384,$('sensitivity').value);}catch(err){console.warn('Detector',err);}
+    try{liveBoxes=detectColorTomatoes(video,$('ripeness').value,384,getSensitivity());}catch(err){console.warn('Detector',err);}
   }else{liveBoxes=[];}
   drawOverlay();
 }
@@ -298,7 +358,7 @@ async function snapPhoto(){
     const W=video.videoWidth,H=video.videoHeight,c=document.createElement('canvas');c.width=W;c.height=H;
     c.getContext('2d').drawImage(video,0,0,W,H);
     // Detect on this exact captured frame, not an earlier preview frame.
-    const detections=autoMode?detectColorTomatoes(c,$('ripeness').value,384,$('sensitivity').value):manualBoxes;
+    const detections=autoMode?detectColorTomatoes(c,$('ripeness').value,384,getSensitivity()):manualBoxes;
     const boxes=detections.map((b)=>({id:uid(),...boxNormalize(b,W,H),method:b.method||'color',ripeness:$('ripeness').value,disease:$('disease').value,attributes:attributeObject()})).filter(b=>b.w>8&&b.h>8);
     const blob=await toJpeg(c);
     const thumb=await makeThumbnail(c);
@@ -566,7 +626,7 @@ async function boot(){
   $('switchCam').addEventListener('click',()=>{rearCamera=!rearCamera;startCamera();});
   $('quality').addEventListener('change',()=>{if(stream)startCamera();});
   $('autoDetect').addEventListener('change',e=>{autoMode=e.target.checked;manualBoxes=[];liveBoxes=[];drawOverlay();});
-  $('sensitivity').addEventListener('change',()=>{liveBoxes=[];analyzeFrame();});
+  $('sensitivity')?.addEventListener('change',()=>{liveBoxes=[];analyzeFrame();});
   overlay.addEventListener('pointerdown',addPreviewManual);overlay.addEventListener('pointermove',movePreviewManual);
   overlay.addEventListener('pointerup',finishPreviewManual);overlay.addEventListener('pointercancel',finishPreviewManual);
   $('capture').addEventListener('pointerdown',beginHold);$('capture').addEventListener('pointerup',endHold);
@@ -631,4 +691,7 @@ async function boot(){
   }else{$('modeBadge').textContent='Cần HTTPS';}
   if(navigator.storage?.persist){try{navigator.storage.persist();}catch{}}
 }
-boot();
+boot().catch(error=>{
+  console.error('Khởi tạo ứng dụng thất bại',error);
+  setCameraError('Lỗi khởi tạo web: '+(error?.message||error)+'. Hãy mở lại bằng đường dẫn GitHub Pages ?v=5.');
+});

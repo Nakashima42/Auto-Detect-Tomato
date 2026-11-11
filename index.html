@@ -11,7 +11,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="apple-touch-icon" href="./icon-192.png">
   <link rel="icon" href="./icon-192.png">
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=5">
   <title>Tomato Collector</title>
 </head>
 <body>
@@ -46,6 +46,7 @@
         <input id="autoDetect" type="checkbox" checked aria-label="Bật/tắt khoanh vùng tự động">
       </div>
     </div>
+    <div id="cameraError" class="camera-error" role="alert" hidden></div>
   </section>
 
   <section class="fields" aria-label="Thiết lập nhãn">
@@ -153,6 +154,6 @@
   </div>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-<script type="module" src="./app.js"></script>
+<script type="module" src="./app.js?v=5"></script>
 </body>
 </html>
