@@ -29,3 +29,6 @@
 .box-inspector strong {font-size:13px;font-weight:700;color:#222}
 .box-inspector span {font-size:12px;color:#3f3f3f}
 .box-inspector small {font-size:11px;color:#777;line-height:1.5;overflow-wrap:anywhere}
+
+/* v8: minimal confirmation for saved annotation without rebuilding photo tiles. */
+.gallery-item.recently-saved { outline: 2px solid #555; outline-offset: -2px; }

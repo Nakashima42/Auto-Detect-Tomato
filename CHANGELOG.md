@@ -1,10 +1,7 @@
-# Tomato Collector v7 — sửa box đã chụp
+# v8 — Bảo vệ ảnh khi lưu chỉnh sửa
 
-- Quay về lọc màu theo nhãn độ chín như v3/v6 (không chuyển thành AI và không thay đổi thuật toán).
-- Thư viện: chạm ảnh, chạm khung để xem nhãn độ chín, bệnh, thuộc tính tùy chỉnh và tọa độ.
-- Chế độ Chọn/Sửa: kéo trong khung để di chuyển; kéo bốn ô vuông ở góc để thay đổi kích thước.
-- Chế độ Thêm khung: kéo trên ảnh để tạo khung mới, rồi sửa nhãn của nó.
-- Xóa từng khung và đổi nhãn như cũ. Hỏi xác nhận nếu thoát khi chưa lưu.
-- Khi sửa ảnh đã xuất ZIP, đánh dấu ảnh cần sao lưu lại để tránh dùng file label.json cũ.
-- Giữ sao lưu 100 ảnh, xuất thủ công phần dư, xóa nhiều ảnh, cơ sở dữ liệu cũ.
-- Cập nhật phiên bản cache v7 để Safari lấy đủ HTML, JS, CSS.
+- Trước khi lưu box, đọc lại bản ghi gốc từ IndexedDB; chỉ cập nhật nhãn và tọa độ, bảo toàn id, tên ảnh, ảnh JPEG và thumbnail trong bản ghi.
+- Kiểm tra ảnh gốc còn tồn tại sau khi ghi; nếu lỗi thì không đóng cửa sổ sửa.
+- Không làm mới toàn bộ ảnh thu nhỏ khi bấm Lưu chỉnh sửa; cập nhật số khung trên ảnh và bộ đếm, giúp hạn chế lỗi ảnh trắng sau lưu trên Safari.
+- Thêm nút Làm mới để đọc lại thư viện từ IndexedDB nếu ảnh xem trước không hiển thị.
+- Không đổi tên database, không xóa bản ghi, giữ lại nhận diện lọc màu theo v3 và các chức năng ZIP 100 ảnh/xóa hàng loạt.

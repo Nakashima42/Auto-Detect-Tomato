@@ -1,4 +1,4 @@
-# Tomato Collector v7 — iPhone offline
+# Tomato Collector v8 — iPhone offline
 
 Trang PWA camera và gắn nhãn cà chua tối giản, không cần máy chủ Python khi sử dụng. Mã vẫn là **lọc màu thử nghiệm theo độ chín được chọn**, không phải AI YOLO.
 
@@ -18,8 +18,13 @@ Trang PWA camera và gắn nhãn cà chua tối giản, không cần máy chủ 
 - Trạng thái đã sao lưu trong app chỉ có nghĩa đã tạo file ZIP; **hãy kiểm tra ZIP thực sự nằm trong Tệp** trước khi xóa ảnh gốc.
 - Xóa ảnh hàng loạt vẫn hoạt động.
 - Bản cập nhật giữ nguyên IndexedDB `tomato-capture-v1`, schema v2: hãy ghi đè toàn bộ tệp trong repository GitHub Pages cũ, không xóa dữ liệu Safari hoặc gỡ app trước khi sao lưu.
-- Mở địa chỉ ứng dụng thêm `?v=7` trên Safari khi đang có Internet, mở lại từ màn hình chính. Thử offline sau khi tài nguyên tải đủ.
+- Mở địa chỉ ứng dụng thêm `?v=8` trên Safari khi đang có Internet, mở lại từ màn hình chính. Thử offline sau khi tài nguyên tải đủ.
 
 ## Giới hạn
 
 Việc khoanh vùng tự động bằng màu có thể thiếu cà chua hoặc phát hiện nhầm lá. Sửa box và kiểm tra nhãn trước khi huấn luyện Faster R-CNN. Quy trình sửa box trên Safari iPhone 11 cần được thử trực tiếp.
+
+## Bảo vệ ảnh trong v8
+Khi lưu chỉnh sửa ứng dụng đọc lại ảnh gốc trong IndexedDB, chỉ thay đổi boxes và trạng thái sao lưu; nó xác minh blob JPG sau khi lưu rồi mới đóng hộp chỉnh sửa. Thư viện không tải lại thumbnail sau thao tác này. Nếu thumbnail trống, bấm **Làm mới**, sau đó kiểm tra số ảnh đã lưu. Trước khi cập nhật hãy xuất ZIP sao lưu và KHÔNG xóa dữ liệu website / gỡ ứng dụng vì sẽ mất ảnh chưa sao lưu.
+
+- Sửa ảnh sẽ KHÔNG mở hộp tải ZIP đột ngột; ảnh được đánh dấu cần sao lưu lại. Nhấn nút **Tải ảnh chưa sao lưu** để xuất ngay nếu muốn.

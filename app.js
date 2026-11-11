@@ -80,6 +80,41 @@ function getPhoto(id){
     req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
   });
 }
+// A review must only change annotations. Read the stored record again in a
+// transaction so the original JPEG, thumbnail, filename and primary key survive.
+function saveEditedBoxes(photoId,editedBoxes,changed){
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction('photos','readwrite');
+    const store=tx.objectStore('photos');
+    let saved=null;
+    let failure=null;
+    const req=store.get(Number(photoId));
+    req.onsuccess=()=>{
+      const current=req.result;
+      if(!current){
+        failure=new Error('Không tìm thấy ảnh gốc trong bộ nhớ. Dữ liệu chưa bị thay đổi.');
+        tx.abort();return;
+      }
+      if(!(current.blob instanceof Blob)||current.blob.size===0){
+        failure=new Error('Ảnh gốc trong bộ nhớ không hợp lệ; không ghi đè để tránh mất dữ liệu.');
+        tx.abort();return;
+      }
+      // Preserve every existing stored field, especially the large JPG Blob.
+      saved={...current,boxes:JSON.parse(JSON.stringify(editedBoxes))};
+      if(changed){
+        saved.backupStatus='pending';
+        saved.exportedAt='';
+        saved.exportedBatch='';
+      }
+      store.put(saved);
+    };
+    req.onerror=()=>{failure=req.error||new Error('Không đọc được ảnh gốc');};
+    tx.oncomplete=()=>resolve(saved);
+    tx.onerror=()=>reject(failure||tx.error||new Error('Không lưu được chỉnh sửa'));
+    tx.onabort=()=>reject(failure||tx.error||new Error('Lưu chỉnh sửa bị hủy'));
+  });
+}
+
 function countPhotos(){
   return new Promise((resolve,reject)=>{
     const req=db.transaction('photos').objectStore('photos').count();
@@ -410,13 +445,18 @@ function toggleSelection(id){
   if(btn){btn.classList.toggle('is-selected',selectedPhotoIds.has(id));btn.setAttribute('aria-pressed',String(selectedPhotoIds.has(id)));}
   updateSelectionControls();
 }
-async function updateLibrary(){
+async function updateLibrarySummary(){
   if(!db)return;
   totalCount=await countPhotos();
   const pendingCount=await countByBackupStatus('pending');
   const exportedCount=Math.max(0,totalCount-pendingCount);
   $('count').textContent=`${totalCount} ảnh đã lưu · ${pendingCount} chưa sao lưu · ${exportedCount} đã sao lưu`;
   $('batchHelp').textContent=`Tự động tạo ZIP mỗi khi đủ 100 ảnh chưa sao lưu. Hiện còn ${pendingCount} ảnh chưa sao lưu.`;
+  updateSelectionControls();
+}
+async function updateLibrary(){
+  if(!db)return;
+  await updateLibrarySummary();
   const items=await recentPhotos(galleryLimit),gallery=$('gallery');
   galleryUrls.forEach(url=>URL.revokeObjectURL(url));galleryUrls=[];gallery.replaceChildren();
   $('loadMore').hidden=totalCount<=galleryLimit;
@@ -431,8 +471,20 @@ async function updateLibrary(){
     btn.classList.toggle('is-selected',checked);
     btn.setAttribute('aria-pressed',String(selectionMode&&checked));
     btn.title=(selectionMode?'Chọn ảnh ':'Mở ảnh ')+item.filename;
-    const img=document.createElement('img'),url=URL.createObjectURL(item.thumb||item.blob);
-    galleryUrls.push(url);img.src=url;img.loading='lazy';img.alt='Ảnh cà chua';
+    const img=document.createElement('img');
+    img.loading='lazy';img.alt='Ảnh cà chua';
+    try{
+      const source=item.thumb instanceof Blob&&item.thumb.size?item.thumb:item.blob;
+      const url=URL.createObjectURL(source);
+      galleryUrls.push(url);img.src=url;
+    }catch(error){
+      img.alt='Ảnh chưa hiển thị; chạm để kiểm tra';
+      console.warn('Không hiển thị được thumbnail #'+item.id,error);
+    }
+    img.addEventListener('error',()=>{
+      img.alt='Không mở được ảnh xem trước; chạm để kiểm tra';
+      btn.title='Không đọc được ảnh xem trước; có thể mở ảnh gốc #'+item.id;
+    });
     const n=document.createElement('span');n.className='num';n.textContent=item.boxes.length+' box';
     const check=document.createElement('span');check.className='selection-mark';check.textContent=checked?'✓':'';
     btn.append(img,n,check);
@@ -441,6 +493,15 @@ async function updateLibrary(){
     gallery.appendChild(btn);
   }
   updateSelectionControls();
+}
+function refreshSavedTile(photoId,boxCount){
+  const tile=$('gallery').querySelector(`[data-photo-id="${Number(photoId)}"]`);
+  if(!tile)return;
+  const n=tile.querySelector('.num');
+  if(n)n.textContent=boxCount+' box';
+  tile.classList.remove('recently-saved');
+  void tile.offsetWidth;
+  tile.classList.add('recently-saved');
 }
 function fillChoice(sel,val){$(sel).value=val;}
 const RIPENESS_NAMES={Ripe:'Chín',Semi_Ripe:'Bán chín',Unripe:'Xanh'};
@@ -809,6 +870,10 @@ async function boot(){
       await updateLibrary();tell(`Đã xóa ${ids.length} ảnh.`);
     }catch(err){tell('Lỗi xóa nhiều ảnh: '+(err?.message||err));updateSelectionControls();}
   });
+  $('refreshGallery')?.addEventListener('click',async()=>{
+    try{await updateLibrary();tell(`Đã đọc lại thư viện: ${totalCount} ảnh.`);}
+    catch(err){tell('Không thể làm mới thư viện: '+(err?.message||err));}
+  });
   $('loadMore').addEventListener('click',async()=>{
     galleryLimit+=GALLERY_PAGE_SIZE;await updateLibrary();
   });
@@ -835,24 +900,34 @@ async function boot(){
     tell('Đã xóa khung. Bấm Lưu chỉnh sửa để ghi lại.');
   });
   $('saveReview').addEventListener('click',async()=>{
-    if(!photoUnderReview)return;
+    if(!photoUnderReview||$('saveReview').disabled)return;
+    const photoId=photoUnderReview.id;
+    const boxCount=photoUnderReview.boxes.length;
+    const changed=originalReviewBoxes!==JSON.stringify(photoUnderReview.boxes);
+    $('saveReview').disabled=true;
+    $('saveReview').textContent='Đang lưu…';
     try{
-      const changed=originalReviewBoxes!==JSON.stringify(photoUnderReview.boxes);
-      if(changed){
-        photoUnderReview.backupStatus='pending';
-        photoUnderReview.exportedAt='';
-        photoUnderReview.exportedBatch='';
+      await saveEditedBoxes(photoId,photoUnderReview.boxes,changed);
+      // Verify both the photo and its blob still exist before closing the editor.
+      const verified=await getPhoto(photoId);
+      if(!verified||!(verified.blob instanceof Blob)||!verified.blob.size||verified.boxes.length!==boxCount){
+        throw new Error('Không thể xác nhận ảnh đã lưu; giữ nguyên màn hình để kiểm tra.');
       }
-      await savePhoto(photoUnderReview);
       closeReview(true);
-      await updateLibrary();
-      if(changed){
-        tell('Đã lưu khung và nhãn. Ảnh sẽ được đưa vào ZIP sao lưu mới.');
-        await maybeAutoExport();
-      }else{
-        tell('Đã lưu ảnh, không có thay đổi.');
-      }
-    }catch(err){tell('Lỗi lưu chỉnh sửa: '+err.message);}
+      // Rebuilding thumbnails can briefly blank Safari object URLs. Preserve the
+      // existing gallery images and update only the changed box count and stats.
+      refreshSavedTile(photoId,boxCount);
+      await updateLibrarySummary();
+      tell(changed?`Đã lưu ảnh #${photoId}. Ảnh vẫn nằm trong thư viện; cần sao lưu lại nhãn.`:`Đã xác nhận ảnh #${photoId} vẫn được lưu.`);
+      // Editing an existing image must not launch a download or navigate away.
+      // The image remains pending; the next capture may trigger the 100-photo backup.
+    }catch(err){
+      tell('Lỗi lưu chỉnh sửa: '+(err?.message||err));
+      console.error('Save review',err);
+    }finally{
+      $('saveReview').disabled=false;
+      $('saveReview').textContent='Lưu chỉnh sửa';
+    }
   });
   $('deletePhoto').addEventListener('click',async()=>{
     if(!photoUnderReview||!confirm('Xóa vĩnh viễn ảnh này và tất cả nhãn?'))return;
@@ -872,5 +947,5 @@ async function boot(){
 }
 boot().catch(error=>{
   console.error('Khởi tạo ứng dụng thất bại',error);
-  setCameraError('Lỗi khởi tạo web: '+(error?.message||error)+'. Hãy mở lại bằng đường dẫn GitHub Pages ?v=7.');
+  setCameraError('Lỗi khởi tạo web: '+(error?.message||error)+'. Hãy mở lại bằng đường dẫn GitHub Pages ?v=8.');
 });
