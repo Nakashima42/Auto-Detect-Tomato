@@ -12,6 +12,7 @@ let renderTimer = null, lastCameraError = '';
 let totalCount = 0, lastDownloadUrl = null;
 let attrList = [];
 let photoUnderReview = null, selectedBox = -1, reviewImageUrl = null;
+let reviewMode = 'edit';
 let dragging = null, originalReviewBoxes = null;
 let toastTimer = null;
 let galleryUrls = [];
@@ -176,7 +177,7 @@ function clearPhotos(){
 }
 
 function readSettings(){
-  for(const id of ['ripeness','disease','interval','quality','sensitivity']){
+  for(const id of ['ripeness','disease','interval','quality']){
     const elem=$(id);
     if(!elem)continue; // Compatible with older HTML temporarily cached by Safari.
     elem.value=getCfg(id,elem.value);
@@ -203,7 +204,6 @@ function renderAttributes(){
   }
 }
 function attributeObject(){return Object.fromEntries(attrList.map(a=>[a.name,a.value]));}
-function getSensitivity(){return $('sensitivity')?.value||'balanced';}
 function cameraErrorText(error){
   const name=error?.name||'';
   if(name==='NotAllowedError'||name==='PermissionDeniedError')return 'Safari đang từ chối camera. Mở trang bằng Safari, vào Cài đặt trang web (aA) → Camera → Cho phép, sau đó thử lại.';
@@ -295,7 +295,7 @@ function analyzeFrame(){
   if(!stream||!video.videoWidth||document.hidden)return;
   if(overlay.width!==video.videoWidth||overlay.height!==video.videoHeight)setCanvasSize(video.videoWidth,video.videoHeight);
   if(autoMode){
-    try{liveBoxes=detectColorTomatoes(video,$('ripeness').value,384,getSensitivity());}catch(err){console.warn('Detector',err);}
+    try{liveBoxes=detectColorTomatoes(video,$('ripeness').value,384);}catch(err){console.warn('Detector',err);}
   }else{liveBoxes=[];}
   drawOverlay();
 }
@@ -370,7 +370,7 @@ async function snapPhoto(){
     const W=video.videoWidth,H=video.videoHeight,c=document.createElement('canvas');c.width=W;c.height=H;
     c.getContext('2d').drawImage(video,0,0,W,H);
     // Detect on this exact captured frame, not an earlier preview frame.
-    const detections=autoMode?detectColorTomatoes(c,$('ripeness').value,384,getSensitivity()):manualBoxes;
+    const detections=autoMode?detectColorTomatoes(c,$('ripeness').value,384):manualBoxes;
     const boxes=detections.map((b)=>({id:uid(),...boxNormalize(b,W,H),method:b.method||'color',ripeness:$('ripeness').value,disease:$('disease').value,attributes:attributeObject()})).filter(b=>b.w>8&&b.h>8);
     const blob=await toJpeg(c);
     const thumb=await makeThumbnail(c);
@@ -443,58 +443,188 @@ async function updateLibrary(){
   updateSelectionControls();
 }
 function fillChoice(sel,val){$(sel).value=val;}
+const RIPENESS_NAMES={Ripe:'Chín',Semi_Ripe:'Bán chín',Unripe:'Xanh'};
+const DISEASE_NAMES={Healthy_Tomato:'Khỏe mạnh',Anthracnose:'Bệnh thán thư',Fruit_Cracking:'Bệnh nứt quả',Blossom_End_Rot:'Bệnh thối đáy quả',Bacterial_Spot:'Bệnh đốm vi khuẩn'};
+function humanLabel(lookup,key){return lookup[key]||key||'Chưa gắn nhãn';}
+function setReviewMode(mode){
+  reviewMode=mode;
+  for(const [id,name] of [['modeEditBox','edit'],['modeAddBox','add']]){
+    const button=$(id);
+    button.classList.toggle('active',mode===name);
+    button.setAttribute('aria-pressed',String(mode===name));
+  }
+  $('reviewHint').textContent=mode==='add'
+    ?'Kéo trên vùng trống của ảnh để thêm khung. Sau đó chạm khung để xem và chỉnh sửa nhãn.'
+    :'Chạm khung để xem nhãn. Kéo bên trong để di chuyển; kéo ô vuông ở góc để đổi kích thước.';
+  if(photoUnderReview)redrawReview();
+}
+function reviewScale(){
+  if(!photoUnderReview)return 1;
+  const r=$('reviewStage').getBoundingClientRect();
+  return Math.max(.001,Math.min(r.width/photoUnderReview.width,r.height/photoUnderReview.height));
+}
+function boxCorners(b){return {
+  tl:{x:b.x,y:b.y},tr:{x:b.x+b.w,y:b.y},
+  br:{x:b.x+b.w,y:b.y+b.h},bl:{x:b.x,y:b.y+b.h}
+};}
+function handleHit(point,b){
+  const radius=15/reviewScale(); // ~15 CSS pixels: usable by fingers on iPhone
+  const points=boxCorners(b);
+  for(const corner of ['tl','tr','br','bl']){
+    const v=points[corner];
+    if(Math.hypot(v.x-point.x,v.y-point.y)<=radius)return corner;
+  }
+  return null;
+}
+function boxHit(point,b){return point.x>=b.x&&point.y>=b.y&&point.x<=b.x+b.w&&point.y<=b.y+b.h;}
+function selectedBoxHit(point){
+  const boxes=photoUnderReview.boxes;
+  // Prioritize the selected box, so overlapping boxes are less frustrating to edit.
+  if(selectedBox>=0&&boxes[selectedBox]&&boxHit(point,boxes[selectedBox]))return selectedBox;
+  for(let i=boxes.length-1;i>=0;i--){if(boxHit(point,boxes[i]))return i;}
+  return -1;
+}
+function clamp(v,min,max){return Math.min(max,Math.max(min,v));}
+function minimumBoxSize(){return Math.max(8,10/reviewScale());}
+function dragEditedBox(original,start,current,mode,corner,W,H){
+  const minSize=Math.min(minimumBoxSize(),W/4,H/4);
+  if(mode==='move')return {
+    ...original,
+    x:clamp(original.x+current.x-start.x,0,Math.max(0,W-original.w)),
+    y:clamp(original.y+current.y-start.y,0,Math.max(0,H-original.h))
+  };
+  let x1=original.x,y1=original.y,x2=original.x+original.w,y2=original.y+original.h;
+  if(corner.includes('l'))x1=clamp(original.x+current.x-start.x,0,x2-minSize);
+  if(corner.includes('r'))x2=clamp(original.x+original.w+current.x-start.x,x1+minSize,W);
+  if(corner.includes('t'))y1=clamp(original.y+current.y-start.y,0,y2-minSize);
+  if(corner.includes('b'))y2=clamp(original.y+original.h+current.y-start.y,y1+minSize,H);
+  return {...original,x:x1,y:y1,w:x2-x1,h:y2-y1};
+}
+function inspectorText(){
+  const selected=photoUnderReview?.boxes[selectedBox];
+  $('boxTools').hidden=!selected;
+  if(!selected)return;
+  fillChoice('boxRipeness',selected.ripeness);
+  fillChoice('boxDisease',selected.disease);
+  $('boxSummary').textContent=`Khung #${selectedBox+1} · Tomato`;
+  $('boxDetail').textContent=`${humanLabel(RIPENESS_NAMES,selected.ripeness)} · ${humanLabel(DISEASE_NAMES,selected.disease)}`;
+  const extras=[];
+  if(selected.attributes&&Object.keys(selected.attributes).length){
+    extras.push(Object.entries(selected.attributes).map(([k,v])=>`${k}: ${v}`).join(' · '));
+  }
+  extras.push(`Vị trí: x=${Math.round(selected.x)}, y=${Math.round(selected.y)} · Rộng ${Math.round(selected.w)} × Cao ${Math.round(selected.h)} px`);
+  $('boxExtra').textContent=extras.join(' | ');
+  $('boxExtra').hidden=false;
+}
 function redrawReview(){
   if(!photoUnderReview)return;
-  const canvas=$('reviewCanvas'),cx=canvas.getContext('2d');cx.clearRect(0,0,canvas.width,canvas.height);
+  const canvas=$('reviewCanvas'),cx=canvas.getContext('2d');
+  cx.clearRect(0,0,canvas.width,canvas.height);
   const scale=canvas.width/390;
   for(let i=0;i<photoUnderReview.boxes.length;i++){
-    const b=photoUnderReview.boxes[i];cx.strokeStyle=i===selectedBox?'#fff':'#d4d4d4';cx.lineWidth=(i===selectedBox?3:2)*scale;
+    const b=photoUnderReview.boxes[i],selected=i===selectedBox;
+    cx.strokeStyle=selected?'#fff':'#bdbdbd';
+    cx.lineWidth=(selected?3:2)*scale;
     cx.strokeRect(b.x,b.y,b.w,b.h);
-    const font=Math.max(17,12*scale),tx=b.x,ty=Math.max(0,b.y-font-5);
-    cx.font=`600 ${font}px sans-serif`;const label='#'+(i+1)+' Tomato';const tw=cx.measureText(label).width;
-    cx.fillStyle=i===selectedBox?'#f8f8f8':'#171717';cx.fillRect(tx,ty,tw+12*scale,font+6*scale);
-    cx.fillStyle=i===selectedBox?'#161616':'#fff';cx.fillText(label,tx+6*scale,ty+font);
+    const font=Math.max(15,12*scale),label=`#${i+1} ${selected?humanLabel(RIPENESS_NAMES,b.ripeness):'Tomato'}`;
+    cx.font=`600 ${font}px sans-serif`;
+    const pad=5*scale,tw=cx.measureText(label).width;
+    const left=clamp(b.x,0,Math.max(0,canvas.width-tw-2*pad));
+    const top=Math.max(0,b.y-font-pad*2);
+    cx.fillStyle=selected?'#f8f8f8':'#171717';cx.fillRect(left,top,tw+pad*2,font+pad*2);
+    cx.fillStyle=selected?'#161616':'#fff';cx.fillText(label,left+pad,top+font+pad*.3);
+    if(selected&&reviewMode==='edit'){
+      const size=9/reviewScale();
+      for(const point of Object.values(boxCorners(b))){
+        cx.fillStyle='#fff';cx.fillRect(point.x-size/2,point.y-size/2,size,size);
+        cx.strokeStyle='#171717';cx.lineWidth=Math.max(2,1.5/reviewScale());
+        cx.strokeRect(point.x-size/2,point.y-size/2,size,size);
+      }
+    }
   }
-  if(dragging?.which==='review'){
-    let b=dragBox(dragging.start,dragging.current);cx.strokeStyle='#fff';cx.lineWidth=2*scale;cx.setLineDash([10,7]);cx.strokeRect(b.x,b.y,b.w,b.h);cx.setLineDash([]);
+  if(dragging?.which==='review'&&dragging.mode==='add'){
+    const b=dragBox(dragging.start,dragging.current);
+    cx.strokeStyle='#fff';cx.lineWidth=2*scale;cx.setLineDash([9*scale,6*scale]);
+    cx.strokeRect(b.x,b.y,b.w,b.h);cx.setLineDash([]);
   }
   $('reviewCount').textContent=photoUnderReview.boxes.length+' khung';
-  const selected=photoUnderReview.boxes[selectedBox];$('boxTools').hidden=!selected;
-  if(selected){fillChoice('boxRipeness',selected.ripeness);fillChoice('boxDisease',selected.disease);}
+  inspectorText();
 }
 async function openReview(id){
   const item=await getPhoto(id);if(!item)return;
-  photoUnderReview=item;originalReviewBoxes=JSON.stringify(item.boxes);selectedBox=item.boxes.length?0:-1;
+  photoUnderReview=item;
+  originalReviewBoxes=JSON.stringify(item.boxes);
+  selectedBox=item.boxes.length?0:-1;
+  dragging=null;
   if(reviewImageUrl)URL.revokeObjectURL(reviewImageUrl);
-  reviewImageUrl=URL.createObjectURL(item.blob);const img=$('reviewImage');
+  reviewImageUrl=URL.createObjectURL(item.blob);
+  const img=$('reviewImage');
   $('reviewTitle').textContent='Kiểm tra ảnh #'+id;
   img.onload=()=>{const c=$('reviewCanvas');c.width=item.width;c.height=item.height;redrawReview();};
-  img.src=reviewImageUrl;$('reviewModal').hidden=false;
+  img.src=reviewImageUrl;
+  $('reviewModal').hidden=false;
+  setReviewMode('edit');
 }
-function closeReview(){
-  photoUnderReview=null;selectedBox=-1;dragging=null;$('reviewModal').hidden=true;
+function closeReview(force=false){
+  if(!force&&photoUnderReview&&originalReviewBoxes!==JSON.stringify(photoUnderReview.boxes)){
+    if(!confirm('Các thay đổi box và nhãn chưa được lưu. Đóng mà không lưu?'))return;
+  }
+  photoUnderReview=null;selectedBox=-1;dragging=null;originalReviewBoxes=null;
+  $('reviewModal').hidden=true;
   if(reviewImageUrl){URL.revokeObjectURL(reviewImageUrl);reviewImageUrl=null;}
 }
 function reviewPointerDown(e){
-  if(!photoUnderReview)return;e.preventDefault();
-  const p=framePos(e,$('reviewStage'),photoUnderReview.width,photoUnderReview.height);if(!p.valid)return;
-  dragging={which:'review',start:p,current:p};$('reviewCanvas').setPointerCapture?.(e.pointerId);
+  if(!photoUnderReview||dragging)return;
+  if(e.pointerType==='mouse'&&e.button!==0)return;
+  e.preventDefault();
+  const p=framePos(e,$('reviewStage'),photoUnderReview.width,photoUnderReview.height);
+  if(!p.valid)return;
+  if(reviewMode==='add'){
+    dragging={which:'review',mode:'add',start:p,current:p,pointerId:e.pointerId};
+  }else{
+    let corner=null;
+    const existing=photoUnderReview.boxes[selectedBox];
+    if(existing)corner=handleHit(p,existing);
+    if(corner){
+      dragging={which:'review',mode:'resize',start:p,current:p,pointerId:e.pointerId,index:selectedBox,corner,original:{...existing}};
+    }else{
+      selectedBox=selectedBoxHit(p);
+      const box=photoUnderReview.boxes[selectedBox];
+      if(box){
+        dragging={which:'review',mode:'move',start:p,current:p,pointerId:e.pointerId,index:selectedBox,original:{...box}};
+      }
+    }
+  }
+  if(dragging)$('reviewCanvas').setPointerCapture?.(e.pointerId);
+  redrawReview();
 }
 function reviewPointerMove(e){
-  if(dragging?.which!=='review')return;
-  dragging.current=framePos(e,$('reviewStage'),photoUnderReview.width,photoUnderReview.height);redrawReview();
+  if(dragging?.which!=='review'||dragging.pointerId!==e.pointerId)return;
+  e.preventDefault();
+  const current=framePos(e,$('reviewStage'),photoUnderReview.width,photoUnderReview.height);
+  dragging.current=current;
+  if(dragging.mode==='move'||dragging.mode==='resize'){
+    photoUnderReview.boxes[dragging.index]=dragEditedBox(dragging.original,dragging.start,current,dragging.mode,dragging.corner||'',photoUnderReview.width,photoUnderReview.height);
+  }
+  redrawReview();
 }
 function reviewPointerEnd(e){
-  if(dragging?.which!=='review')return;
-  const end=framePos(e,$('reviewStage'),photoUnderReview.width,photoUnderReview.height);
-  const b=dragBox(dragging.start,end);dragging=null;
-  if(b.w>16&&b.h>16){
-    photoUnderReview.boxes.push({...b,id:uid(),method:'manual',ripeness:$('ripeness').value,disease:$('disease').value,attributes:attributeObject()});
-    selectedBox=photoUnderReview.boxes.length-1;
-  }else{
-    selectedBox=-1;
-    for(let i=photoUnderReview.boxes.length-1;i>=0;i--){let v=photoUnderReview.boxes[i];if(end.x>=v.x&&end.y>=v.y&&end.x<=v.x+v.w&&end.y<=v.y+v.h){selectedBox=i;break;}}
+  if(dragging?.which!=='review'||dragging.pointerId!==e.pointerId)return;
+  const ending=dragging;
+  if(e.type==='pointercancel'){
+    if(ending.mode==='move'||ending.mode==='resize')photoUnderReview.boxes[ending.index]=ending.original;
+  }else if(ending.mode==='add'){
+    const end=framePos(e,$('reviewStage'),photoUnderReview.width,photoUnderReview.height);
+    const b=dragBox(ending.start,end),minSize=minimumBoxSize();
+    if(b.w>=minSize&&b.h>=minSize){
+      photoUnderReview.boxes.push({...b,id:uid(),method:'manual',ripeness:$('ripeness').value,disease:$('disease').value,attributes:attributeObject()});
+      selectedBox=photoUnderReview.boxes.length-1;
+      setReviewMode('edit');
+    }else{
+      tell('Kéo dài hơn để vẽ khung mới.');
+    }
   }
+  dragging=null;
   redrawReview();
 }
 
@@ -638,7 +768,6 @@ async function boot(){
   $('switchCam').addEventListener('click',()=>{rearCamera=!rearCamera;startCamera();});
   $('quality').addEventListener('change',()=>{if(stream)startCamera();});
   $('autoDetect').addEventListener('change',e=>{autoMode=e.target.checked;manualBoxes=[];liveBoxes=[];selectedPreviewBox=-1;drawOverlay();});
-  $('sensitivity')?.addEventListener('change',()=>{liveBoxes=[];analyzeFrame();});
   overlay.addEventListener('pointerdown',addPreviewManual);overlay.addEventListener('pointermove',movePreviewManual);
   overlay.addEventListener('pointerup',finishPreviewManual);overlay.addEventListener('pointercancel',finishPreviewManual);
   $('capture').addEventListener('pointerdown',beginHold);$('capture').addEventListener('pointerup',endHold);
@@ -683,20 +812,51 @@ async function boot(){
   $('loadMore').addEventListener('click',async()=>{
     galleryLimit+=GALLERY_PAGE_SIZE;await updateLibrary();
   });
-  $('closeReview').addEventListener('click',closeReview);
-  $('reviewCanvas').addEventListener('pointerdown',reviewPointerDown);$('reviewCanvas').addEventListener('pointermove',reviewPointerMove);
-  $('reviewCanvas').addEventListener('pointerup',reviewPointerEnd);$('reviewCanvas').addEventListener('pointercancel',()=>{dragging=null;redrawReview();});
+  $('closeReview').addEventListener('click',()=>closeReview());
+  $('modeEditBox').addEventListener('click',()=>setReviewMode('edit'));
+  $('modeAddBox').addEventListener('click',()=>setReviewMode('add'));
+  $('reviewCanvas').addEventListener('pointerdown',reviewPointerDown);
+  $('reviewCanvas').addEventListener('pointermove',reviewPointerMove);
+  $('reviewCanvas').addEventListener('pointerup',reviewPointerEnd);
+  $('reviewCanvas').addEventListener('pointercancel',reviewPointerEnd);
   for(const [sel,key] of [['boxRipeness','ripeness'],['boxDisease','disease']]){
-    $(sel).addEventListener('change',e=>{if(photoUnderReview&&selectedBox>=0)photoUnderReview.boxes[selectedBox][key]=e.target.value;});
+    $(sel).addEventListener('change',e=>{
+      if(photoUnderReview&&selectedBox>=0){
+        photoUnderReview.boxes[selectedBox][key]=e.target.value;
+        redrawReview();
+      }
+    });
   }
-  $('removeBox').addEventListener('click',()=>{if(photoUnderReview&&selectedBox>=0){photoUnderReview.boxes.splice(selectedBox,1);selectedBox=-1;redrawReview();}});
+  $('removeBox').addEventListener('click',()=>{
+    if(!photoUnderReview||selectedBox<0)return;
+    photoUnderReview.boxes.splice(selectedBox,1);
+    selectedBox=Math.min(selectedBox,photoUnderReview.boxes.length-1);
+    redrawReview();
+    tell('Đã xóa khung. Bấm Lưu chỉnh sửa để ghi lại.');
+  });
   $('saveReview').addEventListener('click',async()=>{
-    if(!photoUnderReview)return;try{await savePhoto(photoUnderReview);closeReview();await updateLibrary();tell('Đã lưu nhãn chỉnh sửa.');}
-    catch(err){tell('Lỗi lưu chỉnh sửa: '+err.message);}
+    if(!photoUnderReview)return;
+    try{
+      const changed=originalReviewBoxes!==JSON.stringify(photoUnderReview.boxes);
+      if(changed){
+        photoUnderReview.backupStatus='pending';
+        photoUnderReview.exportedAt='';
+        photoUnderReview.exportedBatch='';
+      }
+      await savePhoto(photoUnderReview);
+      closeReview(true);
+      await updateLibrary();
+      if(changed){
+        tell('Đã lưu khung và nhãn. Ảnh sẽ được đưa vào ZIP sao lưu mới.');
+        await maybeAutoExport();
+      }else{
+        tell('Đã lưu ảnh, không có thay đổi.');
+      }
+    }catch(err){tell('Lỗi lưu chỉnh sửa: '+err.message);}
   });
   $('deletePhoto').addEventListener('click',async()=>{
     if(!photoUnderReview||!confirm('Xóa vĩnh viễn ảnh này và tất cả nhãn?'))return;
-    await deletePhoto(photoUnderReview.id);selectedPhotoIds.delete(photoUnderReview.id);closeReview();invalidateZip();await updateLibrary();tell('Đã xóa ảnh.');
+    await deletePhoto(photoUnderReview.id);selectedPhotoIds.delete(photoUnderReview.id);closeReview(true);invalidateZip();await updateLibrary();tell('Đã xóa ảnh.');
   });
   $('clearAll').addEventListener('click',async()=>{
     if(!totalCount||!confirm('Xóa tất cả '+totalCount+' ảnh đã lưu trên máy? Hãy xuất ZIP trước.')||!confirm('Xác nhận lần 2: xóa vĩnh viễn tất cả?'))return;
@@ -712,5 +872,5 @@ async function boot(){
 }
 boot().catch(error=>{
   console.error('Khởi tạo ứng dụng thất bại',error);
-  setCameraError('Lỗi khởi tạo web: '+(error?.message||error)+'. Hãy mở lại bằng đường dẫn GitHub Pages ?v=5.');
+  setCameraError('Lỗi khởi tạo web: '+(error?.message||error)+'. Hãy mở lại bằng đường dẫn GitHub Pages ?v=7.');
 });

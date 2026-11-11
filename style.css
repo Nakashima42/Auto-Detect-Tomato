@@ -17,3 +17,15 @@
 /* Camera diagnostics: visible until resolved, no decoration. */
 .camera-error {margin-top:10px;padding:12px;border:1px solid #bbb;background:#f4f4f3;color:#202020;font-size:13px;line-height:1.5;border-radius:8px;}
 .camera-error[hidden]{display:none!important;}
+
+/* v7 — Simple grayscale touch-based box editor */
+.review-mode {display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:0 0 9px}
+.review-mode-btn {border:1px solid #ccc;border-radius:8px;padding:10px 8px;background:white;color:#252525;min-height:41px;font-size:12px;font-weight:600}
+.review-mode-btn.active {background:#202020;color:#fff;border-color:#202020}
+.review-stage {user-select:none;-webkit-user-select:none}
+.review-stage canvas {touch-action:none;cursor:crosshair}
+.review-hint {line-height:1.5;min-height:32px;margin:9px 1px 12px}
+.box-inspector {display:flex;flex-direction:column;gap:4px;background:#eee;border:1px solid #e3e3e3;border-radius:8px;padding:10px 11px;margin-bottom:12px}
+.box-inspector strong {font-size:13px;font-weight:700;color:#222}
+.box-inspector span {font-size:12px;color:#3f3f3f}
+.box-inspector small {font-size:11px;color:#777;line-height:1.5;overflow-wrap:anywhere}

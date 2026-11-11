@@ -1,6 +1,6 @@
 // Network-first for app code avoids stale JS/HTML after GitHub Pages updates.
 // Offline fallback retains a self-contained application when the phone has no network.
-const CACHE = 'tomato-collector-offline-v5';
+const CACHE = 'tomato-collector-offline-v7';
 const ASSETS = ['./','./index.html','./style.css','./app.js','./detector.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting()));

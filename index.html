@@ -11,7 +11,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="apple-touch-icon" href="./icon-192.png">
   <link rel="icon" href="./icon-192.png">
-  <link rel="stylesheet" href="./style.css?v=6">
+  <link rel="stylesheet" href="./style.css?v=7">
   <title>Tomato Collector</title>
 </head>
 <body>
@@ -121,11 +121,6 @@
         <select id="quality"><option value="1920">1080p (ưu tiên)</option><option value="1280">720p (tiết kiệm)</option></select>
       </div>
       <div class="field">
-        <label for="sensitivity">Độ nhạy tự khoanh</label>
-        <select id="sensitivity"><option value="balanced" selected>Cân bằng (ít nhầm hơn)</option><option value="high">Cao (dễ nhận trái nhỏ)</option></select>
-        <p class="field-help">Nhận diện thử cả cà chua đỏ, vàng, xanh, không phụ thuộc nhãn độ chín bạn chọn. Nếu chụp trên cây nhiều lá xanh, cần kiểm tra lại từng khung.</p>
-      </div>
-      <div class="field">
         <label>Tự động sao lưu ZIP</label>
         <p class="field-help" id="batchHelp">Tự động tạo ZIP mỗi khi đủ 100 ảnh chưa sao lưu. Nếu chưa đủ 100 ảnh, bạn có thể bấm nút Tải ảnh chưa sao lưu để lấy phần còn lại.</p>
       </div>
@@ -134,7 +129,7 @@
         <div class="add-attribute"><input id="attrName" maxlength="30" placeholder="Tên: giống, kích cỡ…"><input id="attrValue" maxlength="60" placeholder="Giá trị"><button id="addAttr" class="square-btn" type="button" aria-label="Thêm thuộc tính">+</button></div>
         <div id="attrList" class="attr-list"></div>
       </div>
-      <div class="notice">Tự khoanh hiện chỉ dùng lọc màu + hình dạng để nhận các vùng đỏ, vàng, xanh, chưa phải AI. Trái xanh giữa lá, bóng chói và nhiều quả chồng nhau có thể nhận sai. Bạn có thể sửa vùng trước khi xuất.</div>
+      <div class="notice">Bộ lọc màu theo v3: Chín = đỏ; Bán chín = đỏ/xanh; Xanh = xanh. Đây chưa phải model AI; kiểm tra kỹ từng khung trước khi dùng dữ liệu huấn luyện.</div>
       <button id="clearAll" class="danger-link" type="button">Xóa toàn bộ ảnh đã lưu trên điện thoại</button>
     </div>
   </details>
@@ -144,9 +139,18 @@
 <div id="reviewModal" class="modal" hidden>
   <div class="modal-panel">
     <div class="modal-top"><strong id="reviewTitle">Kiểm tra ảnh</strong><button id="closeReview" class="icon-btn" aria-label="Đóng">✕</button></div>
+    <div class="review-mode" role="group" aria-label="Chế độ sửa khung">
+      <button id="modeEditBox" class="review-mode-btn active" type="button" aria-pressed="true">Chọn / Sửa khung</button>
+      <button id="modeAddBox" class="review-mode-btn" type="button" aria-pressed="false">+ Thêm khung</button>
+    </div>
     <div id="reviewStage" class="review-stage"><img id="reviewImage" alt="Ảnh cà chua vừa chụp"><canvas id="reviewCanvas"></canvas></div>
-    <p class="small muted">Chạm một khung để sửa nhãn. Kéo trên ảnh để thêm khung mới.</p>
+    <p class="small muted review-hint" id="reviewHint">Chạm khung để xem nhãn. Kéo bên trong để di chuyển, kéo ô vuông ở góc để đổi kích thước.</p>
     <div id="boxTools" class="box-tools" hidden>
+      <div class="box-inspector" aria-live="polite">
+        <strong id="boxSummary">Khung được chọn</strong>
+        <span id="boxDetail">Độ chín · Tình trạng</span>
+        <small id="boxExtra" hidden></small>
+      </div>
       <div class="mini-fields">
         <div class="field"><label for="boxRipeness">Độ chín trái này</label><select id="boxRipeness"><option value="Ripe">Chín</option><option value="Semi_Ripe">Bán chín</option><option value="Unripe">Xanh</option></select></div>
         <div class="field"><label for="boxDisease">Tình trạng trái này</label><select id="boxDisease"><option value="Healthy_Tomato">Khỏe mạnh</option><option value="Anthracnose">Thán thư</option><option value="Fruit_Cracking">Nứt quả</option><option value="Blossom_End_Rot">Thối đáy quả</option><option value="Bacterial_Spot">Đốm vi khuẩn</option></select></div>
@@ -158,6 +162,6 @@
   </div>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-<script type="module" src="./app.js?v=6"></script>
+<script type="module" src="./app.js?v=7"></script>
 </body>
 </html>
